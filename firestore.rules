@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == "admin"; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function isVerifiedUser() { return isSignedIn() && request.auth.token.email_verified == true; }
+
+    // --- Validation Blueprints ---
+
+    function isValidAgent(data) {
+      return (data.uid == request.auth.uid || isAdmin())
+        && data.email is string && data.email.size() <= 200
+        && data.role in ["user", "agent", "admin"]
+        && (data.keys().hasAll(['uid', 'email', 'role', 'createdAt']));
+    }
+
+    function isValidProduct(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.category is string && data.category.size() <= 50
+        && data.basePrice is number && data.basePrice >= 0
+        && data.status in ["pending", "approved", "rejected"]
+        && (data.status == "pending" || isAdmin()) // Only admin can approve
+        && (data.agentId == null || data.agentId == request.auth.uid)
+        && data.createdAt == request.time;
+    }
+
+    function isValidOrder(data) {
+      return data.totalAmount is number && data.totalAmount > 0
+        && data.depositAmount == data.totalAmount * 0.5
+        && data.status in ["pending", "processing", "shipped", "delivered", "completed", "cancelled"]
+        && (data.customerId == request.auth.uid || data.customerId == null || isAdmin());
+    }
+
+    // --- Collections ---
+
+    match /agents/{agentId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isVerifiedUser() && isValidId(agentId) && isValidAgent(incoming()) && incoming().createdAt == request.time && incoming().role != "admin";
+      allow update: if (isOwner(agentId) || isAdmin())
+        && isValidAgent(incoming())
+        && incoming().createdAt == existing().createdAt
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'stats'])) ||
+          (isOwner(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['momoNumber', 'name', 'stats']))
+        );
+    }
+
+    match /products/{productId} {
+      allow get: if true;
+      allow list: if resource.data.status == "approved" || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == request.time;
+      allow update: if (isAdmin() || (isOwner(existing().agentId) && existing().status == "pending"))
+        && isValidProduct(incoming())
+        && incoming().createdAt == existing().createdAt
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'mockupImage', 'studioImage'])) ||
+          (isOwner(existing().agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice']))
+        );
+    }
+
+    match /orders/{orderId} {
+      allow get: if isOwner(existing().customerId) || isAdmin();
+      allow list: if isOwner(resource.data.customerId) || isAdmin();
+      allow create: if isVerifiedUser() && isValidId(orderId) && isValidOrder(incoming()) && incoming().createdAt == request.time;
+      allow update: if (isOwner(existing().customerId) || isAdmin())
+        && isValidOrder(incoming())
+        && incoming().createdAt == existing().createdAt
+        && existing().status != "completed"
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'momoReference'])) ||
+          (isOwner(existing().customerId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentConfirmedAt']))
+        );
+    }
+  }
+}

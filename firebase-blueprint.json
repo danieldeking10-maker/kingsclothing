@@ -1,0 +1,82 @@
+{
+  "entities": {
+    "Agent": {
+      "title": "Agent",
+      "description": "User profile with agent capabilities and tracking",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "momoNumber": { "type": "string" },
+        "referralCode": { "type": "string" },
+        "referredBy": { "type": "string", "description": "UID of the agent who referred this user" },
+        "role": { "type": "string", "enum": ["user", "agent", "admin"] },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "totalSales": { "type": "number" },
+            "commissionEarned": { "type": "number" },
+            "designsApproved": { "type": "number" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Apparel product items in the shop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "basePrice": { "type": "number" },
+        "gsmPrices": { "type": "object" },
+        "colors": { "type": "array", "items": { "type": "string" } },
+        "sizes": { "type": "array", "items": { "type": "string" } },
+        "mockupImage": { "type": "string" },
+        "studioImage": { "type": "string" },
+        "agentId": { "type": "string" },
+        "agentName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "category", "basePrice", "status"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer order records",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "depositAmount": { "type": "number" },
+        "remainingAmount": { "type": "number" },
+        "momoReference": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "partially_paid", "completed", "cancelled"] },
+        "agentId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["totalAmount", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/agents/{agentId}": {
+      "schema": "Agent",
+      "description": "Agent profiles indexed by UID"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "All products including agent designs"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    }
+  }
+}
