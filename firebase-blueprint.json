@@ -63,6 +63,32 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["totalAmount", "status", "createdAt"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "User feedback on products",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "rating", "comment"]
+    },
+    "Payout": {
+      "title": "Payout",
+      "description": "Payment records to agents",
+      "type": "object",
+      "properties": {
+        "agentId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "processed", "failed"] },
+        "method": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["agentId", "amount", "status"]
     }
   },
   "firestore": {
@@ -74,9 +100,17 @@
       "schema": "Product",
       "description": "All products including agent designs"
     },
+    "/products/{productId}/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Reviews for a specific product"
+    },
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Customer orders"
+    },
+    "/payouts/{payoutId}": {
+      "schema": "Payout",
+      "description": "Agent payout records"
     }
   }
 }

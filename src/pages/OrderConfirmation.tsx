@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { doc, onSnapshot, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { useAuth } from '../lib/AuthContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { MOMO_NUMBER } from '@/src/constants';
 import { toast } from 'react-hot-toast';
@@ -32,6 +33,7 @@ const STEPS = [
 
 export function OrderConfirmationPage() {
   const { id } = useParams();
+  const { user, isBrandOwner } = useAuth();
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [isConfirming, setIsConfirming] = useState(false);
@@ -355,23 +357,39 @@ export function OrderConfirmationPage() {
                   )}
 
                   {order.status === 'pending' && (
-                    <button 
-                      onClick={handleConfirmPayment}
-                      disabled={isConfirming}
-                      className="w-full py-5 bg-white text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-accent transition-all flex items-center justify-center space-x-3 disabled:opacity-50 disabled:cursor-not-allowed group/btn"
-                    >
-                      {isConfirming ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>Processing...</span>
-                        </>
+                    <div className="space-y-4">
+                      {isBrandOwner ? (
+                        <div className="p-8 border-2 border-accent bg-accent/5 rounded-[2rem] space-y-6">
+                           <div className="flex items-center space-x-3">
+                              <ShieldCheck className="w-5 h-5 text-accent" />
+                              <span className="text-xs font-black uppercase tracking-editorial text-white">Owner Decision Center</span>
+                           </div>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
+                              Verify that <span className="text-accent">{formatGHC(order.depositAmount)}</span> has been received into the Momo wallet before authorizing production.
+                           </p>
+                           <button 
+                            onClick={handleConfirmPayment}
+                            disabled={isConfirming}
+                            className="w-full py-6 bg-accent text-black font-black uppercase text-[11px] tracking-[0.2em] rounded-2xl hover:bg-white transition-all shadow-[0_0_30px_rgba(242,125,38,0.3)] flex items-center justify-center space-x-3"
+                          >
+                            {isConfirming ? (
+                              <RefreshCw className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <Zap className="w-5 h-5" />
+                            )}
+                            <span>Confirm Receipt & Forge</span>
+                          </button>
+                        </div>
                       ) : (
-                        <>
+                        <button 
+                          onClick={() => toast.success('Notification sent to Brand Owner')}
+                          className="w-full py-5 bg-white text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-accent transition-all flex items-center justify-center space-x-3 group/btn"
+                        >
                           <CheckCircle2 className="w-4 h-4 group-hover/btn:scale-125 transition-transform" />
-                          <span>Confirm Deposit Sent</span>
-                        </>
+                          <span>I have sent the deposit</span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   )}
 
                   {['pending', 'processing'].includes(order.status) && (

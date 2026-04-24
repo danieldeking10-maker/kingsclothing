@@ -20,7 +20,8 @@ import {
   CreditCard,
   Package,
   Users,
-  Sparkles
+  Sparkles,
+  ShieldCheck
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -28,6 +29,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
 import { 
@@ -44,20 +46,37 @@ import {
 const MODEL_NAME = 'gemini-3-flash-preview';
 
 export function AgentPortal() {
-  const { user, agentProfile, loading } = useAuth();
+  const { user, agentProfile, loading, isBrandOwner } = useAuth();
   const navigate = useNavigate();
   const [isUploading, setIsUploading] = useState(false);
+  const [isOwnerUploading, setIsOwnerUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [ownerForm, setOwnerForm] = useState({
+    name: '',
+    description: '',
+    basePrice: 150,
+    category: 'T-Shirts',
+    isPrivate: true
+  });
+  const [ownerPreview, setOwnerPreview] = useState<string | null>(null);
+  const [ownerStudioPreview, setOwnerStudioPreview] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'scanning' | 'pending' | 'success' | 'rejected'>('idle');
   const [scanResults, setScanResults] = useState<string | null>(null);
   const [myDesigns, setMyDesigns] = useState<any[]>([]);
   const [myOrders, setMyOrders] = useState<any[]>([]);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [allOrders, setAllOrders] = useState<any[]>([]);
+  const [totalCommission, setTotalCommission] = useState(0);
   const [referredAgents, setReferredAgents] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
+  const [allAgents, setAllAgents] = useState<any[]>([]);
   const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
   const [isGenerating, setIsGenerating] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
   const [generatedPreview, setGeneratedPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ownerFileInputRef = useRef<HTMLInputElement>(null);
+  const ownerStudioInputRef = useRef<HTMLInputElement>(null);
 
   const handleGenerateDesign = async () => {
     if (!genPrompt.trim() || !user) return;
@@ -131,7 +150,7 @@ export function AgentPortal() {
         status: 'pending',
         agentId: user.uid,
         agentName: user.displayName,
-        mockupImage: generatedPreview,
+        mockupImage: await compressImage(generatedPreview),
         createdAt: serverTimestamp()
       });
       toast.success('Design Injected into Ledger!');
@@ -173,17 +192,70 @@ export function AgentPortal() {
       setPayouts(p);
     });
 
+    // Fetch Referrals (New tracking logic)
+    const ordersQuery = isBrandOwner 
+      ? query(collection(db, 'orders'), where('referralAgentId', '!=', null))
+      : query(collection(db, 'orders'), where('referralAgentId', '==', user.uid));
+
+    const unsubscribeReferrals = onSnapshot(ordersQuery, (snapshot) => {
+      const referralList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setReferrals(referralList);
+      
+      // Calculate commissions (10% of deposit for agents)
+      const commission = referralList.reduce((acc, order: any) => {
+        return acc + (order.depositAmount || 0) * 0.1;
+      }, 0);
+      setTotalCommission(commission);
+    });
+
+    // Fetch all orders for brand owner for management
+    let unsubscribeAllOrders = () => {};
+    if (isBrandOwner) {
+      const allOrdersQuery = query(collection(db, 'orders'));
+      unsubscribeAllOrders = onSnapshot(allOrdersQuery, (snapshot) => {
+        setAllOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+    }
+
+    // Fetch all agents for brand owner to track performance
+    let unsubscribeAllAgents = () => {};
+    if (isBrandOwner) {
+      const agentsQuery = query(collection(db, 'agents'));
+      unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
+        setAllAgents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+    }
+
     return () => {
       unsubscribeDesigns();
       unsubscribeOrders();
       unsubscribeReferred();
       unsubscribePayouts();
+      unsubscribeReferrals();
+      unsubscribeAllAgents();
+      unsubscribeAllOrders();
     };
-  }, [user]);
+  }, [user, isBrandOwner]);
 
   const totalReferredSales = useMemo(() => {
     return referredAgents.reduce((acc, agent) => acc + (agent.stats?.totalSales || 0), 0);
   }, [referredAgents]);
+
+  const agentPerformance = useMemo(() => {
+    if (!isBrandOwner) return [];
+    return allAgents.map(agent => {
+      const agentReferrals = referrals.filter(r => r.referralAgentId === agent.id);
+      return {
+        ...agent,
+        referralCount: agentReferrals.length,
+        totalReferralValue: agentReferrals.reduce((acc, r) => acc + (r.totalAmount || 0), 0),
+        netCommission: agentReferrals.reduce((acc, r) => acc + (r.depositAmount || 0) * 0.1, 0)
+      };
+    }).sort((a, b) => b.referralCount - a.referralCount);
+  }, [allAgents, referrals, isBrandOwner]);
 
   const stats = [
     { label: 'Total Sales', value: formatGHC(agentProfile?.stats?.totalSales || 0), icon: BarChart3, color: 'text-blue-500' },
@@ -211,6 +283,117 @@ export function AgentPortal() {
     toast.success('Referral link copied to clipboard!');
   };
 
+  const handleOwnerFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: 'mockup' | 'studio' = 'mockup') => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !isBrandOwner) return;
+
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onload = () => resolve(reader.result as string);
+      });
+      reader.readAsDataURL(file);
+      const base64Data = await base64Promise;
+      if (type === 'mockup') {
+        setOwnerPreview(base64Data);
+      } else {
+        setOwnerStudioPreview(base64Data);
+      }
+    } catch (error: any) {
+      toast.error('Preview failed: ' + error.message);
+    }
+  };
+
+  const handleOwnerFileUpload = async () => {
+    if (!ownerPreview || !user || !isBrandOwner) return;
+    if (!ownerForm.name.trim()) {
+      toast.error('Identity required (Name)');
+      return;
+    }
+
+    setIsOwnerUploading(true);
+    setUploadProgress(5);
+    try {
+      setUploadProgress(15);
+      const compressedMockup = await compressImage(ownerPreview);
+      
+      let finalStudioImage = ownerStudioPreview;
+      
+      if (!finalStudioImage) {
+        setUploadProgress(25);
+        // AI Generation protocol for missing studio vision
+        try {
+          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+          const studioPrompt = `
+            High-end luxury studio photography of a premium streetwear ${ownerForm.category} product.
+            Product Identity: ${ownerForm.name}.
+            Aesthetic Vision: ${ownerForm.description}.
+            Mood: Authoritative, minimalist, architectural lighting, sharp focus, clean urban studio background.
+            Display: Professional flat lay or lifestyle presentation.
+          `;
+
+          const genResults = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts: [{ text: studioPrompt }] },
+            config: { imageConfig: { aspectRatio: "4:3" } }
+          });
+
+          // Extract image from parts
+          const candidates = (genResults as any).candidates;
+          if (candidates && candidates[0]?.content?.parts) {
+            for (const part of candidates[0].content.parts) {
+              if (part.inlineData) {
+                finalStudioImage = `data:image/png;base64,${part.inlineData.data}`;
+                toast.success('AI Studio Vision Forged');
+                break;
+              }
+            }
+          }
+        } catch (genError: any) {
+          console.error('Studio Gen Error:', genError);
+          toast.error('AI Vision Failed: Using Mockup for Studio');
+        }
+      }
+
+      setUploadProgress(65);
+      const compressedStudio = finalStudioImage ? await compressImage(finalStudioImage) : null;
+      setUploadProgress(85);
+
+      await addDoc(collection(db, 'products'), {
+        name: ownerForm.name,
+        category: ownerForm.category,
+        description: ownerForm.description || 'Authorized Brand Owner Submission',
+        basePrice: Number(ownerForm.basePrice),
+        status: 'approved',
+        agentId: user.uid,
+        agentName: 'Kings Brand Owner',
+        mockupImage: compressedMockup,
+        studioImage: compressedStudio,
+        isPrivate: ownerForm.isPrivate,
+        createdAt: serverTimestamp()
+      });
+      setUploadProgress(100);
+      toast.success('Exclusive Authority Injected');
+      setTimeout(() => {
+        setOwnerPreview(null);
+        setOwnerStudioPreview(null);
+        setOwnerForm({
+          name: '',
+          description: '',
+          basePrice: 150,
+          category: 'T-Shirts',
+          isPrivate: true
+        });
+        setUploadProgress(0);
+      }, 500);
+    } catch (error: any) {
+      toast.error('Owner injection failed: ' + error.message);
+      setUploadProgress(0);
+    } finally {
+      setIsOwnerUploading(false);
+    }
+  };
+
   const handleUpdateMomo = async () => {
     if (!user) return;
     try {
@@ -220,6 +403,19 @@ export function AgentPortal() {
       toast.success('Payout settings updated');
     } catch (error) {
       toast.error('Failed to update settings');
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
+    if (!isBrandOwner) return;
+    try {
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
+    } catch (error: any) {
+      toast.error('Update failed: ' + error.message);
     }
   };
 
@@ -298,7 +494,7 @@ export function AgentPortal() {
           status: 'pending',
           agentId: user.uid,
           agentName: user.displayName,
-          mockupImage: `data:${file.type};base64,${base64Data}`,
+          mockupImage: await compressImage(`data:${file.type};base64,${base64Data}`),
           createdAt: serverTimestamp()
         });
         toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
@@ -337,6 +533,12 @@ export function AgentPortal() {
               <h1 className="text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.85]">
                 Kingdom Terminal<span className="text-accent">.</span>
               </h1>
+              {isBrandOwner && (
+                <div className="mt-4 flex items-center space-x-2 text-accent">
+                  <Verified className="w-4 h-4" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Master Authority Recognized: kingsclothingbrand7@gmail.com</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center space-x-4 bg-white/5 p-4 rounded-3xl border border-white/10">
                <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center font-black text-black">
@@ -436,6 +638,567 @@ export function AgentPortal() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-16">
           {/* Main Terminal Area (Col 8) */}
           <div className="lg:col-span-8 space-y-20">
+            {/* Master Studio Terminal (Brand Owner Only) */}
+            {isBrandOwner && (
+              <div className="bg-white p-8 md:p-16 rounded-[3rem] text-black relative border-4 border-accent shadow-[0_40px_80px_rgba(242,125,38,0.15)] mb-20 overflow-hidden">
+                <div className="absolute -right-8 -top-8 w-64 h-64 bg-accent/10 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="relative z-10 flex flex-col lg:flex-row gap-16">
+                  <div className="lg:w-3/5 space-y-12">
+                    <div className="flex items-center space-x-6">
+                      <div className="bg-black p-5 rounded-[2rem] shadow-xl">
+                        <Palette className="w-10 h-10 text-white" />
+                      </div>
+                      <div>
+                        <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter leading-none mb-2">Master Studio<span className="text-accent">.</span></h2>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Direct Injection Protocol • Authority Level: Absolute</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-8">
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-3">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Blueprint Identity</label>
+                             <input 
+                               type="text"
+                               value={ownerForm.name}
+                               onChange={(e) => setOwnerForm({...ownerForm, name: e.target.value})}
+                               placeholder="e.g. Royal Syndicate Tee"
+                               className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 text-sm font-bold tracking-tight focus:border-accent focus:bg-white outline-none transition-all"
+                             />
+                          </div>
+                          <div className="space-y-3">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Inventory Column</label>
+                             <select 
+                               value={ownerForm.category}
+                               onChange={(e) => setOwnerForm({...ownerForm, category: e.target.value})}
+                               className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 text-sm font-bold uppercase tracking-tight focus:border-accent focus:bg-white outline-none appearance-none cursor-pointer transition-all"
+                             >
+                               <option value="T-Shirts">T-Shirts</option>
+                               <option value="Hoodies">Hoodies</option>
+                               <option value="Sweatshirts">Sweatshirts</option>
+                               <option value="Accessories">Accessories</option>
+                               <option value="Exclusive">Exclusive</option>
+                               <option value="Streetwear">Streetwear</option>
+                             </select>
+                          </div>
+                       </div>
+
+                       <div className="space-y-3">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Aesthetic Vision (Description)</label>
+                          <textarea 
+                             value={ownerForm.description}
+                             onChange={(e) => setOwnerForm({...ownerForm, description: e.target.value})}
+                             placeholder="Capture the essence of the craftsmanship..."
+                             className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 text-sm font-medium leading-relaxed focus:border-accent focus:bg-white outline-none min-h-[120px] resize-none transition-all"
+                          />
+                       </div>
+
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                          <div className="space-y-3">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Base Valuation (GHS)</label>
+                             <div className="relative">
+                               <span className="absolute left-6 top-1/2 -translate-y-1/2 font-black text-black/20">₵</span>
+                               <input 
+                                 type="number"
+                                 value={ownerForm.basePrice}
+                                 onChange={(e) => setOwnerForm({...ownerForm, basePrice: Number(e.target.value)})}
+                                 className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 pl-12 text-sm font-bold focus:border-accent focus:bg-white outline-none transition-all"
+                               />
+                             </div>
+                          </div>
+                          
+                          <div 
+                             onClick={() => setOwnerForm({...ownerForm, isPrivate: !ownerForm.isPrivate})}
+                             className={cn(
+                               "flex items-center justify-between p-6 rounded-[2rem] border-4 transition-all cursor-pointer group/toggle relative overflow-hidden",
+                               ownerForm.isPrivate 
+                                ? "bg-accent/10 border-accent shadow-[0_0_30px_rgba(242,125,38,0.2)]" 
+                                : "bg-black/5 border-black/10 hover:border-black/20"
+                             )}
+                          >
+                             {ownerForm.isPrivate && (
+                                <motion.div 
+                                   initial={{ opacity: 0 }}
+                                   animate={{ opacity: 1 }}
+                                   className="absolute inset-0 bg-gradient-to-r from-accent/5 to-transparent pointer-events-none"
+                                />
+                             )}
+                             <div className="flex items-center space-x-5 relative z-10">
+                                <div className={cn(
+                                   "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500",
+                                   ownerForm.isPrivate ? "bg-accent text-black rotate-[360deg]" : "bg-black/10 text-black/40"
+                                )}>
+                                   {ownerForm.isPrivate ? <ShieldCheck className="w-6 h-6" /> : <Users className="w-6 h-6" />}
+                                </div>
+                                <div className="flex flex-col">
+                                   <span className={cn(
+                                      "text-xs font-black uppercase tracking-[0.2em] mb-1 transition-colors",
+                                      ownerForm.isPrivate ? "text-accent" : "text-black/40"
+                                   )}>
+                                      {ownerForm.isPrivate ? "Private Vault" : "Public Market"}
+                                   </span>
+                                   <span className="text-[8px] font-black uppercase tracking-widest text-black/30">
+                                      {ownerForm.isPrivate ? "Authorized Access Only" : "Visible to Global Clients"}
+                                   </span>
+                                </div>
+                             </div>
+                             <div className={cn(
+                                "w-4 h-4 rounded-full transition-all duration-500",
+                                ownerForm.isPrivate ? "bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)] scale-125" : "bg-black/20"
+                             )} />
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="flex flex-col gap-4 pt-4">
+                       <div className="grid grid-cols-2 gap-4">
+                          <input type="file" hidden ref={ownerFileInputRef} onChange={(e) => handleOwnerFileSelect(e, 'mockup')} accept="image/*" />
+                          <button
+                            onClick={() => ownerFileInputRef.current?.click()}
+                            className="bg-black text-white px-6 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-accent hover:text-black transition-all flex items-center justify-center gap-3 active:scale-95 border-2 border-black"
+                          >
+                            <Upload className="w-4 h-4" />
+                            <span>{ownerPreview ? 'Change Mockup' : 'Blueprint Image'}</span>
+                          </button>
+
+                          <input type="file" hidden ref={ownerStudioInputRef} onChange={(e) => handleOwnerFileSelect(e, 'studio')} accept="image/*" />
+                          <button
+                            onClick={() => ownerStudioInputRef.current?.click()}
+                            className="bg-black/5 border-2 border-black/10 text-black px-6 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-white hover:border-black transition-all flex items-center justify-center gap-3 active:scale-95"
+                          >
+                            <Sparkles className="w-4 h-4" />
+                            <span>{ownerStudioPreview ? 'Change Studio' : 'Studio Image'}</span>
+                          </button>
+                       </div>
+
+                       {ownerPreview && (
+                          <div className="space-y-4">
+                             {isOwnerUploading && (
+                                <div className="p-4 bg-accent/10 border border-accent/20 rounded-2xl">
+                                   <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-accent mb-2">
+                                      <span>Uploading Authority...</span>
+                                      <span>{uploadProgress}%</span>
+                                   </div>
+                                   <div className="h-1.5 w-full bg-white/20 rounded-full overflow-hidden">
+                                      <motion.div 
+                                         className="h-full bg-accent"
+                                         initial={{ width: 0 }}
+                                         animate={{ width: `${uploadProgress}%` }}
+                                      />
+                                   </div>
+                                </div>
+                             )}
+                             <button
+                               onClick={handleOwnerFileUpload}
+                               disabled={isOwnerUploading || !ownerPreview}
+                               className="w-full bg-accent text-black px-8 py-6 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-black hover:text-white transition-all flex items-center justify-center gap-3 shadow-xl active:scale-95 disabled:opacity-50"
+                             >
+                               {isOwnerUploading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
+                               <span>Initialise Direct Injection</span>
+                             </button>
+                          </div>
+                       )}
+                    </div>
+                  </div>
+
+                  <div className="lg:w-2/5 space-y-6">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-black/20 italic">Visual Authentication Check</p>
+                    <div className="grid grid-cols-1 gap-6">
+                       <div className="aspect-square bg-black/5 rounded-[2.5rem] border-4 border-dashed border-black/10 overflow-hidden relative group/mockup">
+                          {ownerPreview ? (
+                             <img src={ownerPreview} alt="Mockup" className="w-full h-full object-cover transition-transform duration-700 group-hover/mockup:scale-110" />
+                          ) : (
+                             <div className="w-full h-full flex flex-col items-center justify-center text-black/10">
+                                <ImageIcon className="w-16 h-16 mb-4" strokeWidth={1} />
+                                <span className="text-[10px] font-bold uppercase tracking-tighter">Mockup Missing</span>
+                             </div>
+                          )}
+                          <div className="absolute top-6 left-6 px-3 py-1.5 bg-black text-white text-[8px] font-black uppercase tracking-widest rounded-lg">Blueprint Preview</div>
+                       </div>
+                       
+                       <div className="aspect-[16/9] bg-black/5 rounded-[2rem] border-4 border-dashed border-black/10 overflow-hidden relative group/studio">
+                          {ownerStudioPreview ? (
+                             <img src={ownerStudioPreview} alt="Studio" className="w-full h-full object-cover transition-transform duration-700 group-hover/studio:scale-110" />
+                          ) : (
+                             <div className="w-full h-full flex flex-col items-center justify-center text-black/10">
+                                <Sparkles className="w-10 h-10 mb-2" strokeWidth={1} />
+                                <span className="text-[8px] font-bold uppercase tracking-tighter">Studio Visual Optional</span>
+                             </div>
+                          )}
+                          <div className="absolute top-4 left-4 px-2 py-1 bg-black/40 backdrop-blur-md text-white text-[7px] font-black uppercase tracking-widest rounded-lg">Studio Preview</div>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Product Ledger (Brand Owner Only) */}
+            {isBrandOwner && (
+               <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 mb-20 overflow-hidden">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-8 pb-8 border-b border-white/5">
+                     <div className="flex items-center space-x-6">
+                        <div className="bg-accent/20 p-5 rounded-3xl border border-accent/20">
+                           <Package className="w-10 h-10 text-accent" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Private Ledger</h2>
+                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 italic">High-Security Product Vault</p>
+                        </div>
+                     </div>
+                     <div className="flex gap-4">
+                        <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-center min-w-[140px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Vault Inventory</p>
+                           <p className="text-3xl font-display font-black text-white">{myDesigns.filter(p => p.isPrivate).length}</p>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-center min-w-[140px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Global Active</p>
+                           <p className="text-3xl font-display font-black text-accent">{myDesigns.filter(p => !p.isPrivate).length}</p>
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="bg-black/40 rounded-[2.5rem] border border-white/5 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Blueprint Identity</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Type</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Visibility</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Base Price</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {myDesigns.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-10 py-32 text-center">
+                                <p className="text-sm font-bold uppercase tracking-[0.4em] text-white/10 italic">No blueprints detected in vault.</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            myDesigns.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((product) => (
+                              <tr key={product.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                                <td className="px-8 py-6">
+                                   <div className="flex items-center space-x-4">
+                                      <div className="w-12 h-12 rounded-xl bg-white/5 overflow-hidden border border-white/10 group-hover:border-accent/40 transition-colors">
+                                         <img src={product.mockupImage} alt="" className="w-full h-full object-cover grayscale brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all" />
+                                      </div>
+                                      <div>
+                                         <p className="text-sm font-bold text-white mb-0.5 group-hover:text-accent transition-colors">{product.name}</p>
+                                         <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter italic">ID: {product.id.slice(0, 12).toUpperCase()}</p>
+                                      </div>
+                                   </div>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <span className="text-[10px] font-bold text-white/60 tracking-tight">{product.category}</span>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <div className="flex items-center space-x-2">
+                                      <div className={cn("w-1.5 h-1.5 rounded-full", product.isPrivate ? "bg-accent shadow-[0_0_8px_rgba(242,125,38,0.5)]" : "bg-green-500")} />
+                                      <p className="text-[8px] font-black uppercase tracking-widest text-white/40">
+                                         {product.isPrivate ? "Vaulted (Private)" : "Global (Public)"}
+                                      </p>
+                                   </div>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <p className="text-sm font-mono font-black text-accent">{formatGHC(product.basePrice || 0)}</p>
+                                </td>
+                                <td className="px-8 py-6 text-right">
+                                   <div className="flex justify-end space-x-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <button 
+                                         onClick={() => navigate(`/product/${product.id}`)}
+                                         className="text-[9px] font-black uppercase tracking-widest text-accent hover:underline"
+                                      >
+                                         Inspect
+                                      </button>
+                                      <button 
+                                         onClick={async () => {
+                                            try {
+                                               await updateDoc(doc(db, 'products', product.id), {
+                                                  isPrivate: !product.isPrivate,
+                                                  updatedAt: serverTimestamp()
+                                               });
+                                               toast.success('Visibility modified in ledger');
+                                            } catch (e: any) {
+                                               toast.error('Modification failed: ' + e.message);
+                                            }
+                                         }}
+                                         className="text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white"
+                                      >
+                                         Toggle Visibility
+                                      </button>
+                                   </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+               </div>
+            )}
+
+            {/* Referral Tracking Dashboard (Brand Owner Only) */}
+            {isBrandOwner && (
+              <div className="space-y-12">
+                {/* Agent Performance Leaderboard */}
+                <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
+                     <div className="flex items-center space-x-6">
+                        <div className="bg-purple-500/20 p-5 rounded-3xl border border-purple-500/20">
+                           <Users className="w-10 h-10 text-purple-400" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Agent Ecosystem</h2>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Leaderboard & Network Scalability</p>
+                        </div>
+                     </div>
+                     <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Active Network</p>
+                        <p className="text-2xl font-mono font-black text-white">{allAgents.length} Agents</p>
+                     </div>
+                  </div>
+
+                  <div className="bg-black/20 rounded-[2.5rem] border border-white/10 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Agent Authority</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Referrals</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Revenue Impact</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Commission Paid</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Growth Rate</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {agentPerformance.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-10 py-24 text-center">
+                                <p className="text-sm font-bold uppercase tracking-[0.3em] text-white/10 italic">No agents active in the network yet.</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            agentPerformance.map((agent, index) => (
+                              <tr key={agent.id} className="border-b border-white/5 hover:bg-white/10 transition-colors group">
+                                <td className="px-10 py-8">
+                                  <div className="flex items-center space-x-5">
+                                    <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center font-black text-xs text-white/40 border border-white/10">
+                                      {index + 1}
+                                    </div>
+                                    <div>
+                                      <p className="text-base font-bold text-white group-hover:text-accent transition-colors">{agent.name || 'Anonymous Agent'}</p>
+                                      <p className="text-[9px] font-black uppercase text-white/20 tracking-tighter">{agent.email}</p>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-10 py-8 text-center text-lg font-mono font-black text-accent">{agent.referralCount}</td>
+                                <td className="px-10 py-8">
+                                  <p className="text-base font-mono font-bold text-white">{formatGHC(agent.totalReferralValue)}</p>
+                                  <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Total Transaction Vol</p>
+                                </td>
+                                <td className="px-10 py-8">
+                                  <p className="text-base font-mono font-bold text-green-400">{formatGHC(agent.netCommission)}</p>
+                                  <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">10% Deposit Share</p>
+                                </td>
+                                <td className="px-10 py-8">
+                                   <div className="flex items-center space-x-3">
+                                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                         <div className="h-full bg-accent" style={{ width: `${Math.min(100, (agent.referralCount / 10) * 100)}%` }} />
+                                      </div>
+                                      <span className="text-[10px] font-black text-white/40">{Math.round((agent.referralCount / 10) * 100)}%</span>
+                                   </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3rem] text-white">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
+                     <div className="flex items-center space-x-4">
+                        <div className="bg-accent p-4 rounded-2xl">
+                           <BarChart3 className="w-8 h-8 text-black" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Referral Intelligence</h2>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Global Network Conversion Stats</p>
+                        </div>
+                     </div>
+                   <div className="flex gap-4">
+                      <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                         <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Total Referral Revenue</p>
+                         <p className="text-2xl font-mono font-black text-accent">{formatGHC(referrals.reduce((acc, r) => acc + r.totalAmount, 0))}</p>
+                      </div>
+                      <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                         <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Total Referrals</p>
+                         <p className="text-2xl font-mono font-black text-white">{referrals.length}</p>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="bg-black/20 rounded-[2rem] border border-white/10 overflow-hidden">
+                   <table className="w-full text-left">
+                      <thead>
+                         <tr className="border-b border-white/10">
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Agent Identity</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Customer</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Amount</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Status</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Date</th>
+                         </tr>
+                      </thead>
+                      <tbody>
+                         {referrals.length === 0 ? (
+                            <tr>
+                               <td colSpan={5} className="px-8 py-20 text-center text-sm font-medium text-white/20 uppercase tracking-widest">
+                                  No referral data found in the records.
+                               </td>
+                            </tr>
+                         ) : (
+                            referrals.map((referral) => (
+                               <tr key={referral.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                  <td className="px-8 py-6">
+                                     <p className="text-sm font-bold font-mono text-accent">
+                                        {allAgents.find(a => a.id === referral.referralAgentId)?.name || referral.referralAgentId}
+                                     </p>
+                                     <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter">Verified Agent Identity</p>
+                                  </td>
+                                  <td className="px-8 py-6">
+                                     <p className="text-sm font-bold text-white">{referral.customerName}</p>
+                                     <p className="text-[8px] font-black uppercase text-white/20">{referral.userEmail}</p>
+                                  </td>
+                                  <td className="px-8 py-6 text-sm font-mono font-bold text-white">{formatGHC(referral.totalAmount)}</td>
+                                  <td className="px-8 py-6">
+                                     <span className={cn(
+                                        "px-4 py-1.5 rounded-full text-[8px] font-black uppercase tracking-widest",
+                                        referral.status === 'completed' ? "bg-accent/20 text-accent" : "bg-white/5 text-white/40"
+                                     )}>
+                                        {referral.status}
+                                     </span>
+                                  </td>
+                                  <td className="px-8 py-6 text-[10px] font-bold text-white/40">
+                                     {referral.createdAt?.toDate().toLocaleDateString()}
+                                  </td>
+                               </tr>
+                            ))
+                         )}
+                      </tbody>
+                   </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+            {/* Fulfillment Ledger (Brand Owner Only) */}
+            {isBrandOwner && (
+               <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 mb-20">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-4">
+                     <div className="flex items-center space-x-6">
+                        <div className="bg-orange-500/20 p-5 rounded-3xl border border-orange-500/20">
+                           <Package className="w-10 h-10 text-accent" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Fulfillment Ledger</h2>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Global Order Dispatch & Verification</p>
+                        </div>
+                     </div>
+                     <div className="flex gap-4">
+                        <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Total Orders</p>
+                           <p className="text-2xl font-mono font-black text-white">{allOrders.length}</p>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl text-right">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Pending Shipment</p>
+                           <p className="text-2xl font-mono font-black text-accent">{allOrders.filter(o => o.status !== 'delivered' && o.status !== 'completed').length}</p>
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="bg-black/20 rounded-[2.5rem] border border-white/10 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left min-w-[800px]">
+                        <thead>
+                          <tr className="border-b border-white/10 bg-white/5">
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Order Ref</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Product</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Customer</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40">Status</th>
+                            <th className="px-8 py-6 text-[10px] font-black uppercase tracking-widest text-white/40 text-right">Fulfillment</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {allOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-10 py-24 text-center">
+                                <p className="text-sm font-bold uppercase tracking-[0.3em] text-white/10 italic">No global orders detected.</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            allOrders.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((order) => (
+                              <tr key={order.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                                <td className="px-8 py-6">
+                                   <p className="text-sm font-bold font-mono text-white mb-0.5">{order.id.slice(0, 8).toUpperCase()}</p>
+                                   <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter">
+                                      {order.createdAt?.toDate().toLocaleDateString()}
+                                   </p>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <div className="flex items-center space-x-3">
+                                      <p className="text-sm font-bold text-white">{order.items?.[0]?.name}</p>
+                                      <span className="text-[9px] font-black text-accent bg-accent/10 px-2 py-0.5 rounded border border-accent/20">{order.items?.[0]?.size}</span>
+                                   </div>
+                                   <p className="text-[8px] font-black uppercase text-white/20">{order.items?.[0]?.color} • {order.items?.[0]?.gsm} GSM</p>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <p className="text-sm font-bold text-accent">{order.customerName}</p>
+                                   <p className="text-[8px] font-black uppercase text-white/20">{order.userEmail || order.customerId.slice(0, 5)}</p>
+                                </td>
+                                <td className="px-8 py-6">
+                                   <span className={cn(
+                                      "px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest",
+                                      order.status === 'delivered' ? "bg-green-500/20 text-green-500" :
+                                      order.status === 'completed' ? "bg-accent/20 text-accent" : "bg-white/5 text-white/20"
+                                   )}>
+                                      {order.status}
+                                   </span>
+                                </td>
+                                <td className="px-8 py-6 text-right">
+                                   <div className="flex justify-end space-x-2">
+                                      {order.status !== 'delivered' && order.status !== 'completed' && (
+                                         <button 
+                                            onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
+                                            className="bg-accent/10 hover:bg-accent text-accent hover:text-black border border-accent/20 px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all active:scale-95 shadow-lg"
+                                         >
+                                            Confirm Dispatch
+                                         </button>
+                                      )}
+                                      <button 
+                                         onClick={() => navigate(`/order/${order.id}`)}
+                                         className="bg-white/5 hover:bg-white text-white/40 hover:text-black border border-white/10 px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all"
+                                      >
+                                         View Details
+                                      </button>
+                                   </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+               </div>
+            )}
+
             {/* Design Studio Terminal */}
             <div className="bg-[#0F0F10] rounded-[3rem] p-8 md:p-16 border border-white/5 relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-8 opacity-5">
@@ -755,7 +1518,9 @@ export function AgentPortal() {
             <div className="space-y-8 px-2 mt-20">
                <div className="flex justify-between items-end">
                   <h3 className="text-sm font-black uppercase tracking-editorial italic text-white">Network Intelligence</h3>
-                  <p className="text-[10px] text-white/20 font-black uppercase tracking-widest italic">{referredAgents.length} Agents Verified</p>
+                  <p className="text-[10px] text-white/20 font-black uppercase tracking-widest italic">
+                    {isBrandOwner ? `${allAgents.length} Agents Managed` : `${referredAgents.length} Agents Verified`}
+                  </p>
                </div>
 
                <div className="glass p-10 rounded-[3rem] border border-white/5 relative overflow-hidden group">
@@ -763,52 +1528,83 @@ export function AgentPortal() {
                      <Users className="w-48 h-48 text-accent" strokeWidth={1} />
                   </div>
                   
-                  <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-12">
-                     <div className="space-y-8">
-                        <div>
-                           <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mb-4 italic">Total Network Performance</p>
-                           <h4 className="text-5xl font-display font-black text-accent tracking-tighter">{formatGHC(totalReferredSales)}</h4>
-                        </div>
-                        <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
-                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/40">
-                              <span>Commission Rate</span>
-                              <span className="text-accent">10.0%</span>
+                  <div className="relative z-10 space-y-12">
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                        <div className="space-y-8">
+                           <div>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mb-4 italic">Total Network Performance</p>
+                              <h4 className="text-5xl font-display font-black text-accent tracking-tighter">
+                                {isBrandOwner ? formatGHC(referrals.reduce((acc, r) => acc + (r.totalAmount || 0), 0)) : formatGHC(totalReferredSales)}
+                              </h4>
                            </div>
-                           <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/40">
-                              <span>Total Signups</span>
-                              <span className="text-white">{referredAgents.length}</span>
+                           <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
+                              <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/40">
+                                 <span>Network Type</span>
+                                 <span className="text-accent">{isBrandOwner ? "Global Collective" : "Direct Referral"}</span>
+                              </div>
+                              <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/40">
+                                 <span>Active Agents</span>
+                                 <span className="text-white">{isBrandOwner ? allAgents.length : referredAgents.length}</span>
+                              </div>
+                           </div>
+                        </div>
+
+                        <div className="space-y-6">
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Recent Network Activity</p>
+                           <div className="space-y-3">
+                              {(isBrandOwner ? allAgents : referredAgents).slice(0, 4).sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((agent) => (
+                                 <div key={agent.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 group/row hover:border-accent/20 transition-all">
+                                    <div className="flex items-center space-x-3">
+                                       <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-black text-[10px] text-white group-hover/row:bg-accent group-hover/row:text-black transition-colors">
+                                          {agent.name?.charAt(0) || 'U'}
+                                       </div>
+                                       <div className="max-w-[120px]">
+                                          <p className="text-[10px] font-black uppercase tracking-widest text-white/60 truncate leading-none mb-1">{agent.name}</p>
+                                          <p className="text-[7px] font-black uppercase tracking-widest text-white/20 italic">
+                                             {agent.createdAt ? new Date(agent.createdAt.seconds * 1000).toLocaleDateString() : 'Active Member'}
+                                          </p>
+                                       </div>
+                                    </div>
+                                    <div className="text-right">
+                                       <p className="text-[9px] font-mono font-black text-accent">{formatGHC(agent.stats?.totalSales || 0)}</p>
+                                    </div>
+                                 </div>
+                              ))}
                            </div>
                         </div>
                      </div>
 
-                     <div className="space-y-6">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Recent Network Activity</p>
-                        <div className="space-y-3">
-                           {referredAgents.slice(0, 4).sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((agent) => (
-                              <div key={agent.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 group/row hover:border-accent/20 transition-all">
-                                 <div className="flex items-center space-x-3">
-                                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-black text-[10px] text-white group-hover/row:bg-accent group-hover/row:text-black transition-colors">
-                                       {agent.name?.charAt(0) || 'U'}
-                                    </div>
-                                    <div className="max-w-[120px]">
-                                       <p className="text-[10px] font-black uppercase tracking-widest text-white/60 truncate leading-none mb-1">{agent.name}</p>
-                                       <p className="text-[7px] font-black uppercase tracking-widest text-white/20 italic">
-                                          {agent.createdAt ? new Date(agent.createdAt.seconds * 1000).toLocaleDateString() : 'Active Member'}
-                                       </p>
-                                    </div>
-                                 </div>
-                                 <div className="text-right">
-                                    <p className="text-[9px] font-mono font-black text-accent">{formatGHC(agent.stats?.totalSales || 0)}</p>
-                                 </div>
-                              </div>
-                           ))}
-                           {referredAgents.length === 0 && (
-                              <div className="py-12 text-center opacity-20 italic">
-                                 <p className="text-[8px] font-black uppercase tracking-widest">Awaiting network expansion.</p>
-                              </div>
-                           )}
+                     {/* Global Performance Analysis (Owner Only) */}
+                     {isBrandOwner && (
+                        <div className="pt-10 border-t border-white/5">
+                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 mb-8 mb-6 italic">Global Performance Analysis</p>
+                           <div className="bg-black/20 rounded-3xl border border-white/10 overflow-hidden">
+                              <table className="w-full text-left">
+                                 <thead>
+                                    <tr className="border-b border-white/10">
+                                       <th className="px-6 py-4 text-[9px] font-black uppercase text-white/40">Agent Identity</th>
+                                       <th className="px-6 py-4 text-[9px] font-black uppercase text-white/40">Referrals</th>
+                                       <th className="px-6 py-4 text-[9px] font-black uppercase text-white/40">Total Value</th>
+                                       <th className="px-6 py-4 text-[9px] font-black uppercase text-white/40 text-right">Commission</th>
+                                    </tr>
+                                 </thead>
+                                 <tbody>
+                                    {agentPerformance.map((performance: any) => (
+                                       <tr key={performance.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                          <td className="px-6 py-4">
+                                             <p className="text-xs font-bold text-white mb-0.5">{performance.name}</p>
+                                             <p className="text-[8px] font-black uppercase text-white/20 italic">{performance.id.slice(0, 8)}</p>
+                                          </td>
+                                          <td className="px-6 py-4 text-xs font-mono font-bold text-white">{performance.referralCount}</td>
+                                          <td className="px-6 py-4 text-xs font-mono font-black text-accent">{formatGHC(performance.totalReferralValue)}</td>
+                                          <td className="px-6 py-4 text-xs font-mono text-white/40 text-right">{formatGHC(performance.netCommission)}</td>
+                                       </tr>
+                                    ))}
+                                 </tbody>
+                              </table>
+                           </div>
                         </div>
-                     </div>
+                     )}
                   </div>
                </div>
             </div>

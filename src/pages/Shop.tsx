@@ -40,7 +40,9 @@ export function ShopPage() {
     // Fetch approved products
     const q = query(collection(db, 'products'), where('status', '==', 'approved'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const items = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((p: any) => !p.isPrivate); // Filter out private designs from public shop
       setProducts(items);
       setLoading(false);
     }, (error) => {

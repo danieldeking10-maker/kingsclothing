@@ -32,13 +32,56 @@ import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 import { GSM } from '@/src/types';
 
+const ProductSkeleton = () => (
+  <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
+    <div className="max-w-7xl mx-auto">
+      <div className="h-4 w-48 bg-white/5 rounded-full mb-20" />
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-24">
+        <div className="lg:col-span-7 space-y-10">
+          <div className="aspect-[4/5] bg-white/5 rounded-[3.5rem]" />
+          <div className="flex justify-center space-x-4">
+            <div className="w-20 h-24 bg-white/5 rounded-2xl" />
+            <div className="w-20 h-24 bg-white/5 rounded-2xl" />
+          </div>
+        </div>
+        <div className="lg:col-span-5 space-y-12">
+          <div className="space-y-8">
+            <div className="h-4 w-24 bg-accent/10 rounded-full" />
+            <div className="h-32 w-full bg-white/5 rounded-3xl" />
+            <div className="space-y-4">
+              <div className="h-4 w-full bg-white/5 rounded-full" />
+              <div className="h-4 w-5/6 bg-white/5 rounded-full" />
+            </div>
+          </div>
+          <div className="h-56 w-full bg-white/5 rounded-[3rem]" />
+          <div className="space-y-8">
+            <div className="h-32 w-full bg-white/5 rounded-3xl" />
+            <div className="flex gap-4">
+              <div className="h-20 flex-1 bg-white/5 rounded-full" />
+              <div className="h-20 flex-1 bg-white/5 rounded-full" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+const GSM_PROFILES: Record<string, { label: string; sub: string }> = {
+  '230': { label: 'Precision', sub: '230 GSM • Breathable Efficiency' },
+  '260': { label: 'Standard', sub: '260 GSM • Professional Choice' },
+  '320': { label: 'Armor', sub: '320 GSM • Ultra Heavyweight' },
+  'standard': { label: 'Standard', sub: 'Factory Regular' }
+};
+
 export function ProductPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isBrandOwner } = useAuth();
   const { addItem } = useCart();
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [imageLoading, setImageLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'mockup' | 'studio'>('studio');
   const [selectedGsm, setSelectedGsm] = useState<GSM>('260');
   const [selectedColor, setSelectedColor] = useState(FABRIC_COLORS[0]);
@@ -48,6 +91,8 @@ export function ProductPage() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState(1);
+  const [referralId, setReferralId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [isHovering, setIsHovering] = useState(false);
   const [reviews, setReviews] = useState<any[]>([]);
@@ -71,6 +116,7 @@ export function ProductPage() {
 
   useEffect(() => {
     if (!id) return;
+    setImageLoading(true); // Reset image loading on ID change
     const fetchProduct = async () => {
       try {
         const docRef = doc(db, 'products', id);
@@ -96,18 +142,70 @@ export function ProductPage() {
       }
     };
     fetchProduct();
+
+    // Capture referral ID
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get('ref');
+    if (ref) {
+      setReferralId(ref);
+      sessionStorage.setItem('last_referral_id', ref);
+    } else {
+      const storedRef = sessionStorage.getItem('last_referral_id');
+      if (storedRef) setReferralId(storedRef);
+    }
   }, [id, navigate]);
 
   const price = useMemo(() => {
     if (!product) return 0;
-    if (product.category === 'T-Shirts') {
-      return (PRICING['T-Shirts'] as any)[selectedGsm] || 150;
+    
+    // 1. Check for gsmPrices on the product itself (custom designs)
+    if (product.gsmPrices && product.gsmPrices[selectedGsm]) {
+      return product.gsmPrices[selectedGsm];
     }
-    return (PRICING as any)[product.category] || 180;
+
+    // 2. Fallback to global PRICING constants
+    const globalCategoryPricing = (PRICING as any)[product.category];
+    
+    if (globalCategoryPricing) {
+      if (typeof globalCategoryPricing === 'object') {
+        return globalCategoryPricing[selectedGsm] || globalCategoryPricing['260'] || 150;
+      }
+      return globalCategoryPricing;
+    }
+
+    return 180; // Absolute fallback
   }, [product, selectedGsm]);
 
   const deposit = price * DEPOSIT_PERCENTAGE;
   const balance = price - deposit;
+
+  const activeImage = useMemo(() => {
+    if (!product) return '';
+    
+    // 1. High Priority Match: Colour-specific studio shot from the ledger
+    if (product.colorStudioImages?.[selectedColor.name]) {
+      return product.colorStudioImages[selectedColor.name];
+    }
+    
+    // 2. Secondary Match: Colour-specific pre-rendered mockup
+    if (product.colorImages?.[selectedColor.name]) {
+      return product.colorImages[selectedColor.name];
+    }
+
+    // 3. Authority Directive: Fallback to neutral blueprint with CSS color injection
+    // This ensures the visual always reflects the specific fabric shade selected
+    return product.mockupImage;
+  }, [product, selectedColor]);
+
+  // Sync view mode indicator with selected shade asset availability
+  useEffect(() => {
+    setImageLoading(true); // Trigger loading for any asset transition
+    if (product?.colorStudioImages?.[selectedColor.name]) {
+      setViewMode('studio');
+    } else {
+      setViewMode('mockup');
+    }
+  }, [selectedColor, product]);
 
   const handleAddToCart = () => {
     if (!product) return;
@@ -115,14 +213,14 @@ export function ProductPage() {
       id: product.id,
       name: product.name,
       price: price,
-      image: product.mockupImage,
+      image: activeImage,
       size: selectedSize,
       color: selectedColor.name,
       gsm: selectedGsm,
-      quantity: 1,
+      quantity: quantity,
       category: product.category,
     });
-    toast.success(`Success: ${product.name} locked into cart`);
+    toast.success(`Success: ${product.name} (x${quantity}) locked into cart`);
   };
 
   const handleShare = () => {
@@ -142,19 +240,19 @@ export function ProductPage() {
     { 
       name: 'WhatsApp', 
       icon: MessageCircle, 
-      color: 'hover:text-green-500',
+      color: 'hover:text-green-500 hover:bg-green-500/10 hover:border-green-500/20',
       href: `https://wa.me/?text=${encodeURIComponent(`Check out ${product?.name} from Kings Clothing: ${window.location.href}`)}` 
     },
     { 
       name: 'Twitter', 
       icon: Twitter, 
-      color: 'hover:text-blue-400',
+      color: 'hover:text-sky-400 hover:bg-sky-400/10 hover:border-sky-400/20',
       href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`Forging new authority with ${product?.name} from Kings Clothing.`) }&url=${encodeURIComponent(window.location.href)}` 
     },
     { 
       name: 'Facebook', 
       icon: Facebook, 
-      color: 'hover:text-blue-600',
+      color: 'hover:text-blue-600 hover:bg-blue-600/10 hover:border-blue-600/20',
       href: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}` 
     },
   ];
@@ -171,21 +269,24 @@ export function ProductPage() {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       
       const prompt = `
-        You are a luxury streetwear brand copywriter for "Kings Clothing Brand". 
-        Take the following product description and transform it into a more evocative, authoritative, and regal brand narrative.
+        You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
+        Your mission is to transform the provided product description into a powerful, evocative brand narrative that commands respect.
         
-        Requirements:
-        1. Incorporate the spirit of "Ghanaian craftsmanship".
-        2. Establish "streetwear authority".
-        3. Use powerful, high-impact language.
-        4. Keep it concise (max 3-4 sentences).
+        Themes to emphasize:
+        1. "Ghanaian Craftsmanship": The soul of Accra, the precision of traditional heritage met with modern industrial standards.
+        2. "Streetwear Authority": The unapologetic stance of a leader. This isn't just clothing; it's a social contract of power.
+        
+        Style:
+        - Use bold, architectural language.
+        - Evocative and rhythmic.
+        - Concise (3-4 sentences total).
         
         Original Description: ${product.description}
         Product Name: ${product.name}
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3-flash-preview",
         contents: prompt,
       });
 
@@ -219,11 +320,13 @@ export function ProductPage() {
           gsm: selectedGsm,
           color: selectedColor.name,
           size: selectedSize,
-          price: price
+          price: price,
+          quantity: quantity
         }],
-        totalAmount: price,
-        depositAmount: deposit,
+        totalAmount: price * quantity,
+        depositAmount: deposit * quantity,
         status: 'pending',
+        referralAgentId: referralId || null,
         createdAt: serverTimestamp()
       };
 
@@ -265,8 +368,23 @@ export function ProductPage() {
     }
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black uppercase italic tracking-widest animate-pulse">Scanning Blueprint...</div>;
+  if (loading) return <ProductSkeleton />;
   if (!product) return null;
+
+  if (product.isPrivate && !isBrandOwner) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center p-8 text-center space-y-6 bg-background">
+         <ShieldCheck className="w-16 h-16 text-accent animate-pulse" />
+         <h1 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white">Access <br/> Restricted</h1>
+         <p className="text-white/40 uppercase font-black tracking-widest text-[10px] max-w-xs leading-relaxed">
+            This asset belongs to the Private Collection. Only the Brand Owner has authorization to view this blueprint.
+         </p>
+         <Link to="/shop" className="mt-8 bg-white text-black px-12 py-5 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-accent transition-all">
+            Return to Public Catalog
+         </Link>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8">
@@ -292,12 +410,39 @@ export function ProductPage() {
                 setMousePos({ x, y });
               }}
               onMouseEnter={() => setIsHovering(true)}
-              onMouseLeave={() => setIsHovering(false)}
+              onMouseLeave={() => {
+                setIsHovering(false);
+                setMousePos({ x: 50, y: 50 }); // Reset to center
+              }}
               onClick={() => setIsFullScreen(true)}
             >
+              {imageLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F10] z-30 transition-all duration-700">
+                  <div className="relative">
+                    <motion.div 
+                      animate={{ 
+                        rotate: 360,
+                        scale: [1, 1.1, 1],
+                      }}
+                      transition={{ 
+                        rotate: { duration: 2, repeat: Infinity, ease: "linear" },
+                        scale: { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
+                      }}
+                      className="w-24 h-24 border-4 border-accent/10 border-t-accent rounded-full"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <RefreshCw className="w-8 h-8 text-accent animate-spin" />
+                    </div>
+                  </div>
+                  <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-center space-y-2">
+                     <p className="text-[10px] font-black uppercase tracking-[0.5em] text-accent animate-pulse">Syncing Asset</p>
+                     <p className="text-[7px] font-black uppercase tracking-widest text-white/20 italic">Resolving High-Def Blueprint</p>
+                  </div>
+                </div>
+              )}
               <AnimatePresence mode="wait">
                 <motion.div
-                  key={viewMode}
+                  key={viewMode + selectedColor.name} // Include color in key for fresh transitions
                   className="w-full h-full relative"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -305,16 +450,28 @@ export function ProductPage() {
                   transition={{ duration: 0.5 }}
                 >
                   <motion.img
-                    src={viewMode === 'mockup' ? product.mockupImage : (product.studioImage || product.mockupImage)}
+                    src={activeImage}
+                    onLoad={() => setImageLoading(false)}
                     alt={product.name}
-                    className="w-full h-full object-cover transition-all duration-1000 origin-center"
+                    className="w-full h-full object-cover transition-all duration-300 ease-out"
                     style={{
                       transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
-                      scale: isHovering ? 1.5 : 1,
-                      filter: isHovering ? 'grayscale(0) brightness(1)' : 'grayscale(1) brightness(0.9)'
+                      scale: isHovering ? 1.8 : 1,
+                      filter: isHovering ? 'grayscale(0) brightness(1)' : 'grayscale(0.5) brightness(0.9)'
                     }}
                     referrerPolicy="no-referrer"
                   />
+                  
+                  {/* Digital Fabric Dye Overlay - Activates when no color-specific image assets are detected in the ledger */}
+                  {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
+                    <motion.div 
+                      key={`overlay-${selectedColor.name}`}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4 }}
+                      className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
+                      style={{ backgroundColor: selectedColor.hex }}
+                    />
+                  )}
                 </motion.div>
               </AnimatePresence>
 
@@ -350,31 +507,29 @@ export function ProductPage() {
 
             {/* Thumbnail Gallery */}
             {product.studioImage && (
-              <div className="flex justify-center space-x-6">
+              <div className="flex justify-center space-x-4">
                 <button 
                   onClick={() => setViewMode('mockup')}
                   className={cn(
-                    "w-24 h-32 rounded-[2rem] overflow-hidden border-2 transition-all duration-500 relative group/thumb",
-                    viewMode === 'mockup' ? "border-accent shadow-[0_0_30px_rgba(242,125,38,0.2)] scale-105" : "border-white/5 opacity-40 hover:opacity-100"
+                    "w-20 h-24 rounded-2xl overflow-hidden border-2 transition-all duration-500 relative group/thumb",
+                    viewMode === 'mockup' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
                   <img src={product.mockupImage} alt="Mockup" className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" referrerPolicy="no-referrer" />
-                  <div className="absolute inset-0 bg-black/20 group-hover/thumb:bg-transparent transition-colors" />
-                  <div className="absolute bottom-2 inset-x-0 text-center">
-                    <span className="text-[7px] font-black uppercase tracking-widest text-white drop-shadow-md">Blueprint</span>
+                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                    <span className="text-[6px] font-black uppercase tracking-widest text-white">Blueprint</span>
                   </div>
                 </button>
                 <button 
                   onClick={() => setViewMode('studio')}
                   className={cn(
-                    "w-24 h-32 rounded-[2rem] overflow-hidden border-2 transition-all duration-500 relative group/thumb",
-                    viewMode === 'studio' ? "border-accent shadow-[0_0_30px_rgba(242,125,38,0.2)] scale-105" : "border-white/5 opacity-40 hover:opacity-100"
+                    "w-20 h-24 rounded-2xl overflow-hidden border-2 transition-all duration-500 relative group/thumb",
+                    viewMode === 'studio' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
                   <img src={product.studioImage} alt="Studio" className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" referrerPolicy="no-referrer" />
-                  <div className="absolute inset-0 bg-black/20 group-hover/thumb:bg-transparent transition-colors" />
-                  <div className="absolute bottom-2 inset-x-0 text-center">
-                    <span className="text-[7px] font-black uppercase tracking-widest text-white drop-shadow-md">Studio</span>
+                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                    <span className="text-[6px] font-black uppercase tracking-widest text-white">Studio</span>
                   </div>
                 </button>
               </div>
@@ -412,41 +567,98 @@ export function ProductPage() {
                 {product.description}
               </p>
 
-              {/* AI Narrative Toggle */}
+              {/* Social Sharing Section */}
+              <div className="mt-12 flex flex-col space-y-4">
+                <div className="flex items-center space-x-3">
+                  <Share2 className="w-3 h-3 text-accent" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Broadcast Authority</span>
+                </div>
+                <div className="flex items-center space-x-4">
+                  {sharePlatforms.map((platform) => (
+                    <motion.a
+                      key={platform.name}
+                      href={platform.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      whileHover={{ scale: 1.1, y: -2 }}
+                      whileTap={{ scale: 0.95 }}
+                      className={cn(
+                        "w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 transition-all",
+                        platform.color
+                      )}
+                      title={`Share on ${platform.name}`}
+                    >
+                      <platform.icon className="w-5 h-5" />
+                    </motion.a>
+                  ))}
+                  <motion.button
+                    onClick={copyToClipboard}
+                    whileHover={{ scale: 1.1, y: -2 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-accent hover:border-accent/40 transition-all"
+                    title="Copy Link to Clipboard"
+                  >
+                    <LinkIcon className="w-5 h-5" />
+                  </motion.button>
+                </div>
+              </div>
+
+              {/* AI Narrative Button (Simplified) */}
               <div className="mt-8">
-                 {!enhancedDescription ? (
-                    <button
-                      onClick={handleEnhanceDescription}
-                      disabled={isEnhancing}
-                      className="flex items-center space-x-2 text-[9px] font-black uppercase tracking-widest text-accent hover:text-white transition-colors group"
-                    >
-                       {isEnhancing ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                       ) : (
-                          <Wand2 className="w-3 h-3 group-hover:rotate-12 transition-transform" />
-                       )}
-                       <span>Forge Royal Narrative</span>
-                    </button>
-                 ) : (
-                    <motion.div
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="space-y-4"
-                    >
-                       <div className="flex items-center justify-between">
-                          <span className="text-accent text-[8px] font-black uppercase tracking-editorial italic">Neural Blueprint Verified</span>
-                          <button 
-                            onClick={() => setEnhancedDescription(null)}
-                            className="text-[8px] font-black uppercase tracking-widest text-white/20 hover:text-white transition-colors"
-                          >
-                            Reset Narrative
-                          </button>
-                       </div>
-                       <p className="text-white text-xl md:text-2xl font-display font-black leading-relaxed italic tracking-tighter">
-                          "{enhancedDescription}"
-                       </p>
-                    </motion.div>
-                 )}
+                 <AnimatePresence mode="wait">
+                    {isEnhancing ? (
+                       <motion.div 
+                         key="enhancing"
+                         initial={{ opacity: 0, scale: 0.95 }}
+                         animate={{ opacity: 1, scale: 1 }}
+                         exit={{ opacity: 0, scale: 1.05 }}
+                         className="p-10 rounded-[2.5rem] border-2 border-accent bg-accent/5 backdrop-blur-xl relative overflow-hidden group/enhancing shadow-[0_0_50px_rgba(242,125,38,0.1)]"
+                       >
+                          <div className="absolute top-0 right-0 p-4 opacity-10">
+                             <Wand2 className="w-24 h-24 text-accent" />
+                          </div>
+                          <div className="relative z-10 flex items-center space-x-8">
+                             <div className="relative">
+                                <motion.div 
+                                  animate={{ rotate: 360 }}
+                                  transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                                  className="w-16 h-16 border-4 border-dashed border-accent rounded-full"
+                                />
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                   <RefreshCw className="w-6 h-6 text-accent animate-spin" />
+                                </div>
+                             </div>
+                             <div className="space-y-2">
+                                <h4 className="text-sm font-black uppercase tracking-editorial italic text-accent">Neural Engine Active</h4>
+                                <div className="flex items-center space-x-2">
+                                   <div className="w-1.5 h-1.5 bg-accent rounded-full animate-ping" />
+                                   <p className="text-[8px] font-black uppercase tracking-widest text-white/40 italic">Forging Ghanaian Streetwear Narrative...</p>
+                                </div>
+                             </div>
+                          </div>
+                          
+                          <div className="absolute bottom-0 left-0 w-full h-1 bg-white/5 overflow-hidden">
+                             <motion.div 
+                               initial={{ x: "-100%" }}
+                               animate={{ x: "0%" }}
+                               transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                               className="w-full h-full bg-gradient-to-r from-transparent via-accent to-transparent opacity-40"
+                             />
+                          </div>
+                       </motion.div>
+                    ) : !enhancedDescription ? (
+                       <motion.button
+                         key="btn"
+                         initial={{ opacity: 0 }}
+                         animate={{ opacity: 1 }}
+                         onClick={handleEnhanceDescription}
+                         className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-[0.2em] text-accent hover:text-white transition-all group px-4 py-2 bg-accent/5 rounded-full hover:bg-accent/10"
+                       >
+                          <Wand2 className="w-4 h-4 group-hover:rotate-12 transition-transform" />
+                          <span>Forge Royal Narrative</span>
+                       </motion.button>
+                    ) : null}
+                 </AnimatePresence>
               </div>
             </div>
 
@@ -475,58 +687,92 @@ export function ProductPage() {
             </div>
 
             {/* Controls */}
-            <div className="space-y-12">
+            <div className="space-y-16">
               {/* GSM Selector */}
-              {product.category === 'T-Shirts' && (
+              {(product.category === 'T-Shirts' || (product.gsmOptions && product.gsmOptions.length > 1)) && (
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-editorial mb-6 block text-white/40">Blueprint Weight</label>
-                  <div className="grid grid-cols-3 gap-4">
-                    {(['230', '260', '320'] as const).map(gsm => (
-                      <button
-                        key={gsm}
-                        onClick={() => setSelectedGsm(gsm)}
-                        className={cn(
-                          "py-5 rounded-2xl border-2 transition-all font-black text-[11px] uppercase tracking-widest",
-                          selectedGsm === gsm 
-                            ? "border-accent bg-white text-black" 
-                            : "border-white/5 bg-white/5 text-white/40 hover:border-white/20"
-                        )}
-                      >
-                        {gsm} GSM
-                      </button>
-                    ))}
+                   <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center space-x-2">
+                        <ShieldCheck className="w-3 h-3 text-accent" />
+                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Blueprint Weight (GSM)</label>
+                      </div>
+                      <span className="text-[8px] font-black text-accent uppercase tracking-widest italic">Industrial Grade</span>
+                   </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {(product.gsmOptions || ['230', '260', '320']).map(gsm => {
+                      const profile = GSM_PROFILES[gsm as string] || { label: gsm, sub: 'Specific Weight' };
+                      return (
+                        <button
+                          key={gsm}
+                          onClick={() => setSelectedGsm(gsm as GSM)}
+                          className={cn(
+                            "group relative py-6 px-6 rounded-3xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden text-center",
+                            selectedGsm === gsm 
+                              ? "border-accent bg-white text-black shadow-[0_0_30px_rgba(255,255,255,0.1)] scale-[1.02]" 
+                              : "border-white/5 bg-white/5 text-white/40 hover:border-white/20"
+                          )}
+                        >
+                          <span className="font-black text-[14px] tracking-widest mb-1 uppercase italic">{profile.label}</span>
+                          <span className="text-[7px] font-black uppercase tracking-widest opacity-60 leading-tight">{profile.sub}</span>
+                          {selectedGsm === gsm && (
+                             <motion.div 
+                               layoutId="gsm-active"
+                               className="absolute inset-0 bg-accent/5 pointer-events-none"
+                             />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
 
               {/* Color Swatches */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                <div>
-                  <label className="text-[10px] font-black uppercase tracking-editorial mb-6 block text-white/40">Fabric Shade: {selectedColor.name}</label>
-                  <div className="flex flex-wrap gap-4">
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-12">
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-6">
+                    <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Fabric Shade</label>
+                    <span className="text-[9px] font-black text-white italic tracking-widest uppercase">{selectedColor.name}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-5">
                     {FABRIC_COLORS.map(color => (
                       <button
                         key={color.name}
                         onClick={() => setSelectedColor(color)}
                         className={cn(
-                          "w-12 h-12 rounded-full border border-white/10 transition-all shadow-2xl relative group",
-                          selectedColor.name === color.name ? "ring-2 ring-accent ring-offset-4 ring-offset-background scale-110" : "hover:scale-105"
+                          "w-14 h-14 rounded-full border-2 transition-all relative group flex items-center justify-center",
+                          selectedColor.name === color.name ? "border-accent scale-110" : "border-white/10 hover:border-white/30"
                         )}
-                        style={{ backgroundColor: color.hex }}
                       >
-                        <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all text-[8px] font-black uppercase tracking-widest text-accent whitespace-nowrap">
-                          {color.name}
-                        </span>
+                        <div 
+                          className="w-10 h-10 rounded-full shadow-inner relative flex items-center justify-center"
+                          style={{ backgroundColor: color.hex }}
+                        >
+                           {selectedColor.name === color.name && (
+                              <motion.div
+                                initial={{ opacity: 0, scale: 0.5 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                              >
+                                 <ShieldCheck className={cn(
+                                   "w-4 h-4",
+                                   color.name === 'Pure White' ? "text-black" : "text-white"
+                                 )} />
+                              </motion.div>
+                           )}
+                        </div>
+                        {selectedColor.name === color.name && (
+                           <div className="absolute -inset-1 border border-accent rounded-full animate-pulse" />
+                        )}
                       </button>
                     ))}
                   </div>
                 </div>
                 
                 {/* Size Controls */}
-                <div className="lg:min-w-[200px]">
+                <div className="lg:min-w-[240px]">
                    <div className="flex justify-between items-center mb-6">
-                      <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Sizing</label>
-                      <button className="text-[9px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all">Dimensions</button>
+                      <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Structural Sizing</label>
+                      <button className="text-[8px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all italic">Blueprint Specs</button>
                    </div>
                    <div className="flex flex-wrap gap-3">
                       {SIZES.map(size => (
@@ -534,10 +780,10 @@ export function ProductPage() {
                           key={size}
                           onClick={() => setSelectedSize(size)}
                           className={cn(
-                            "w-12 h-12 rounded-full border-2 transition-all font-black text-[11px] flex items-center justify-center tracking-tighter",
+                            "w-14 h-14 rounded-2xl border-2 transition-all font-black text-[12px] flex items-center justify-center tracking-tighter",
                             selectedSize === size 
-                              ? "border-accent bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.2)]" 
-                              : "border-white/5 text-white/20 hover:border-white/20"
+                              ? "border-accent bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.2)] scale-105" 
+                              : "border-white/5 text-white/20 hover:border-white/40"
                           )}
                         >
                           {size}
@@ -549,21 +795,41 @@ export function ProductPage() {
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-5 mt-20">
+            <div className="flex flex-col gap-6 mt-20">
+               <div className="flex items-center gap-4">
+                  <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
+                     <button 
+                        onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                     >
+                        <X className="w-4 h-4 rotate-45" />
+                     </button>
+                     <div className="flex-1 text-center">
+                        <span className="text-[14px] font-black font-mono text-white tracking-widest">{quantity.toString().padStart(2, '0')}</span>
+                        <p className="text-[7px] font-black uppercase text-white/20 tracking-widest leading-none mt-1">Units</p>
+                     </div>
+                     <button 
+                        onClick={() => setQuantity(quantity + 1)}
+                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                     >
+                        <X className="w-4 h-4" />
+                     </button>
+                  </div>
+                  <button 
+                    onClick={handleAddToCart}
+                    className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 h-[84px] rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
+                  >
+                     <ShoppingCart className="w-5 h-5 transition-transform group-hover:scale-110" />
+                     <span>Add to Cart</span>
+                  </button>
+               </div>
                <button 
                  onClick={handleBuyNow}
                  disabled={isOrdering}
-                 className="flex-[2] bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
+                 className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
                >
                   {isOrdering ? <RefreshCw className="animate-spin w-5 h-5" /> : <Zap className="w-5 h-5 transition-transform group-hover:scale-110 group-hover:rotate-12" />}
                   <span>Initialize Build (Deposit)</span>
-               </button>
-               <button 
-                 onClick={handleAddToCart}
-                 className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
-               >
-                  <ShoppingBag className="w-5 h-5 transition-transform group-hover:scale-110" />
-                  <span>Secure to Cart</span>
                </button>
             </div>
 
@@ -590,6 +856,46 @@ export function ProductPage() {
             </div>
           </div>
         </div>
+
+        {/* AI Enhanced Narrative Section */}
+        <AnimatePresence>
+          {enhancedDescription && (
+            <motion.div 
+              initial={{ opacity: 0, y: 40 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              className="mt-32 relative py-20 px-4 md:px-20 overflow-hidden rounded-[4rem] group"
+            >
+               <div className="absolute inset-0 bg-accent/5 backdrop-blur-3xl -z-10" />
+               <div className="absolute top-0 right-0 w-96 h-96 bg-accent/10 rounded-full blur-[120px] -translate-y-1/2 translate-x-1/2" />
+               
+               <div className="max-w-4xl mx-auto text-center space-y-10">
+                  <div className="flex flex-col items-center space-y-4">
+                     <div className="bg-accent/20 p-4 rounded-2xl">
+                        <Wand2 className="w-6 h-6 text-accent" />
+                     </div>
+                     <span className="text-accent text-[10px] font-black uppercase tracking-[0.4em]">Royal Essence Archetype</span>
+                  </div>
+
+                  <h2 className="text-4xl md:text-6xl font-display font-black text-white italic tracking-tighter leading-tight">
+                     "{enhancedDescription}"
+                  </h2>
+
+                  <div className="pt-10 flex flex-col items-center space-y-6">
+                     <div className="h-px w-24 bg-accent/20" />
+                     <p className="text-[9px] font-black uppercase tracking-widest text-white/40 max-w-xs leading-relaxed">
+                        Forged through neural synthesis. This narrative represents the absolute streetwear authority of the Kings Clothing Brand.
+                     </p>
+                     <button 
+                       onClick={() => setEnhancedDescription(null)}
+                       className="text-[8px] font-black uppercase tracking-widest text-accent hover:text-white transition-colors"
+                     >
+                       Restore Original Blueprint
+                     </button>
+                  </div>
+               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Reviews Section */}
         <div className="mt-32 pt-20 border-t border-white/5">
@@ -751,18 +1057,33 @@ export function ProductPage() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="relative max-w-5xl w-full aspect-[4/5] md:aspect-auto md:max-h-full overflow-hidden rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)]"
+              className="relative max-w-5xl w-full aspect-[4/5] md:aspect-auto md:max-h-full overflow-hidden rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] cursor-zoom-out group"
               onClick={(e) => e.stopPropagation()}
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = ((e.clientX - rect.left) / rect.width) * 100;
+                const y = ((e.clientY - rect.top) / rect.height) * 100;
+                setMousePos({ x, y });
+              }}
+              onMouseEnter={() => setIsHovering(true)}
+              onMouseLeave={() => {
+                setIsHovering(false);
+                setMousePos({ x: 50, y: 50 });
+              }}
             >
-              <img
-                src={viewMode === 'mockup' ? product.mockupImage : (product.studioImage || product.mockupImage)}
+              <motion.img
+                src={activeImage}
                 alt={product.name}
-                className="w-full h-full object-contain"
+                className="w-full h-full object-contain transition-transform duration-300 ease-out"
+                style={{
+                  transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
+                  scale: isHovering ? 2.5 : 1,
+                }}
                 referrerPolicy="no-referrer"
               />
               
-              <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end">
-                <div className="glass p-6 rounded-3xl">
+              <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end pointer-events-none">
+                <div className="glass p-6 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity">
                   <h2 className="text-2xl font-display font-black uppercase italic text-white mb-2">{product.name}</h2>
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/40 italic">
                     {viewMode === 'mockup' ? 'Blueprint Data Visualization' : 'Studio Heritage Shot'}
