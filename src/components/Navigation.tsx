@@ -173,9 +173,12 @@ export function Header() {
 }
 
 
+import { RecentlyViewed } from './RecentlyViewed';
+
 export function Footer() {
   return (
     <footer className="bg-background border-t border-white/10 py-16 px-4">
+      <RecentlyViewed />
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-16">
         <div className="space-y-6">
           <h2 className="text-2xl font-display font-black tracking-tighter uppercase italic">

@@ -1,11 +1,15 @@
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { SlidersHorizontal, ArrowUpDown, Grid3X3, List, RefreshCw, ChevronRight, Zap } from 'lucide-react';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { SlidersHorizontal, ArrowUpDown, RefreshCw, ChevronRight, Zap, Trash2, Edit3 } from 'lucide-react';
+import { collection, query, where, onSnapshot, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { CATEGORIES, PRICING } from '@/src/constants';
 import { formatGHC, cn } from '@/src/lib/utils';
+import { useAuth } from '../lib/AuthContext';
+import toast from 'react-hot-toast';
+
+import { ProductCard } from '@/src/components/ProductCard';
 
 // Helper to get price from the nested pricing object
 const getPrice = (category: string, subType?: string): number => {
@@ -16,6 +20,7 @@ const getPrice = (category: string, subType?: string): number => {
 };
 
 export function ShopPage() {
+  const { user, isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const search = searchParams.get('search')?.toLowerCase() || '';
   const sortParam = searchParams.get('sort') || 'newest';
@@ -81,6 +86,39 @@ export function ShopPage() {
     return diff < 7 * 24 * 60 * 60 * 1000;
   };
 
+  const handleDelete = async (productId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!window.confirm('Are you sure you want to delete this design? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+      toast.success('Design purged from catalog');
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error('Failed to delete design');
+    }
+  };
+
+  const handleUpdatePrice = async (productId: string, newPrice: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    try {
+      await updateDoc(doc(db, 'products', productId), {
+        basePrice: newPrice,
+        updatedAt: new Date()
+      });
+      toast.success('Economic authority updated');
+    } catch (error) {
+      console.error('Update error:', error);
+      toast.error('Failed to update price');
+    }
+  };
+
   return (
     <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
@@ -143,70 +181,14 @@ export function ShopPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
             <AnimatePresence mode="popLayout">
               {filteredProducts.map((product, idx) => (
-                <motion.div
-                  layout
+                <ProductCard
                   key={product.id}
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ delay: idx * 0.05 }}
-                  className="group relative"
-                >
-                  <Link to={`/product/${product.id}`} className="block space-y-6">
-                    <div className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#1A1A1B] group-hover:shadow-[0_0_50px_rgba(242,125,38,0.1)] transition-all duration-700">
-                      <img 
-                        src={product.mockupImage} 
-                        alt={product.name} 
-                        className="w-full h-full object-cover grayscale brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-1000 group-hover:scale-105"
-                        referrerPolicy="no-referrer"
-                      />
-                      
-                      {/* Brand Tag */}
-                      <div className="absolute top-6 left-6 p-1 bg-background/50 backdrop-blur-xl border border-white/10 rounded-xl overflow-hidden">
-                         <div className="px-3 py-1 flex items-center space-x-2">
-                            <div className="w-1.5 h-1.5 rounded-full bg-accent" />
-                            <p className="text-[8px] font-black uppercase tracking-widest text-white">
-                              {product.category} Collection
-                            </p>
-                            {isNew(product.createdAt) && (
-                              <span className="ml-2 bg-accent text-black text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">NEW</span>
-                            )}
-                         </div>
-                      </div>
-
-                      {/* Agent Badge */}
-                      {product.agentName && (
-                        <div className="absolute bottom-6 left-6 right-6 translate-y-full group-hover:translate-y-0 transition-transform duration-500">
-                          <div className="glass p-4 rounded-2xl flex items-center justify-between">
-                            <span className="text-[9px] font-black uppercase tracking-tighter text-white/60">Designed by <span className="text-accent underline decoration-accent/20 italic">{product.agentName}</span></span>
-                            <ChevronRight className="w-4 h-4 text-accent" />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Status/Format Badge */}
-                      <div className="absolute top-6 right-6">
-                         <div className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center backdrop-blur-xl group-hover:border-accent/40 transition-colors">
-                            <Zap className="w-4 h-4 text-white/20 group-hover:text-accent group-hover:scale-125 transition-all" />
-                         </div>
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-end px-2">
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-display font-black uppercase italic tracking-tight group-hover:text-accent transition-colors leading-none">
-                          {product.name}
-                        </h3>
-                        <p className="text-[9px] font-medium text-white/30 uppercase tracking-[0.3em] font-sans">
-                           EST. ACCRA • 2026
-                        </p>
-                      </div>
-                      <p className="text-accent font-mono font-black text-lg tracking-tighter">
-                        {formatGHC(getPrice(product.category, product.subType))}
-                      </p>
-                    </div>
-                  </Link>
-                </motion.div>
+                  product={product}
+                  isAdmin={isAdmin}
+                  onDelete={handleDelete}
+                  onUpdatePrice={handleUpdatePrice}
+                  isNew={isNew(product.createdAt)}
+                />
               ))}
             </AnimatePresence>
           </div>

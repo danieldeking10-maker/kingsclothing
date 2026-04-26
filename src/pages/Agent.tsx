@@ -21,7 +21,8 @@ import {
   Package,
   Users,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  Grid3X3
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -32,6 +33,7 @@ import { useAuth } from '../lib/AuthContext';
 import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
+import { FABRIC_COLORS } from '../constants';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -56,7 +58,10 @@ export function AgentPortal() {
     description: '',
     basePrice: 150,
     category: 'T-Shirts',
-    isPrivate: true
+    isPrivate: true,
+    allowedColors: FABRIC_COLORS.map(c => c.name),
+    colorImages: {} as Record<string, string>,
+    colorStudioImages: {} as Record<string, string>
   });
   const [ownerPreview, setOwnerPreview] = useState<string | null>(null);
   const [ownerStudioPreview, setOwnerStudioPreview] = useState<string | null>(null);
@@ -70,6 +75,7 @@ export function AgentPortal() {
   const [referredAgents, setReferredAgents] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [allAgents, setAllAgents] = useState<any[]>([]);
+  const [allDesigns, setAllDesigns] = useState<any[]>([]);
   const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
   const [isGenerating, setIsGenerating] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
@@ -151,6 +157,7 @@ export function AgentPortal() {
         agentId: user.uid,
         agentName: user.displayName,
         mockupImage: await compressImage(generatedPreview),
+        allowedColors: FABRIC_COLORS.map(c => c.name),
         createdAt: serverTimestamp()
       });
       toast.success('Design Injected into Ledger!');
@@ -222,10 +229,16 @@ export function AgentPortal() {
 
     // Fetch all agents for brand owner to track performance
     let unsubscribeAllAgents = () => {};
+    let unsubscribeAllDesigns = () => {};
     if (isBrandOwner) {
       const agentsQuery = query(collection(db, 'agents'));
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
         setAllAgents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      const designsQuery = query(collection(db, 'products'));
+      unsubscribeAllDesigns = onSnapshot(designsQuery, (snapshot) => {
+        setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
     }
 
@@ -236,6 +249,7 @@ export function AgentPortal() {
       unsubscribePayouts();
       unsubscribeReferrals();
       unsubscribeAllAgents();
+      unsubscribeAllDesigns();
       unsubscribeAllOrders();
     };
   }, [user, isBrandOwner]);
@@ -247,15 +261,52 @@ export function AgentPortal() {
   const agentPerformance = useMemo(() => {
     if (!isBrandOwner) return [];
     return allAgents.map(agent => {
+      // 1. Referral Stats (Marketing performance)
       const agentReferrals = referrals.filter(r => r.referralAgentId === agent.id);
+      const successfulReferrals = agentReferrals.filter(r => r.status === 'completed');
+      const referralRevenue = agentReferrals.reduce((acc, r) => acc + (r.totalAmount || 0), 0);
+      const commissionPaid = agentReferrals.reduce((acc, r) => acc + (r.depositAmount || 0) * 0.1, 0);
+      
+      // 2. Design Stats (Creative performance)
+      const agentDesigns = allDesigns.filter(d => d.agentId === agent.id);
+      const approvedDesigns = agentDesigns.filter(d => d.status === 'approved');
+      const approvalRate = agentDesigns.length > 0 
+        ? (approvedDesigns.length / agentDesigns.length) * 100 
+        : 0;
+
+      // 3. Design Sales (Direct product interest)
+      // Attribute sales specifically from designs this agent uploaded
+      const designIds = new Set(agentDesigns.map(d => d.id));
+      const salesFromDesigns = allOrders.filter(order => 
+        order.items?.some((item: any) => designIds.has(item.productId))
+      );
+      const designRevenue = salesFromDesigns.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
+      
+      // 4. Overall Growth/Utility Score
+      const growthRate = (referralRevenue + (designRevenue * 0.5)) > 0 
+        ? ((referralRevenue + designRevenue) / 1000) * 100 // Arbitrary but based on volume
+        : 0;
+
       return {
         ...agent,
         referralCount: agentReferrals.length,
-        totalReferralValue: agentReferrals.reduce((acc, r) => acc + (r.totalAmount || 0), 0),
-        netCommission: agentReferrals.reduce((acc, r) => acc + (r.depositAmount || 0) * 0.1, 0)
+        successfulCount: successfulReferrals.length,
+        totalRevenue: referralRevenue + designRevenue, // Combined impact
+        referralRevenue,
+        designRevenue,
+        commissionPaid,
+        designCount: agentDesigns.length,
+        approvedDesigns: approvedDesigns.length,
+        approvalRate,
+        growthRate: Math.min(100, growthRate)
       };
-    }).sort((a, b) => b.referralCount - a.referralCount);
-  }, [allAgents, referrals, isBrandOwner]);
+    }).sort((a, b) => b.totalRevenue - a.totalRevenue);
+  }, [allAgents, referrals, allDesigns, allOrders, isBrandOwner]);
+
+  const pendingDesigns = useMemo(() => {
+    if (!isBrandOwner) return [];
+    return allDesigns.filter(d => d.status === 'pending');
+  }, [allDesigns, isBrandOwner]);
 
   const stats = [
     { label: 'Total Sales', value: formatGHC(agentProfile?.stats?.totalSales || 0), icon: BarChart3, color: 'text-blue-500' },
@@ -370,6 +421,7 @@ export function AgentPortal() {
         mockupImage: compressedMockup,
         studioImage: compressedStudio,
         isPrivate: ownerForm.isPrivate,
+        allowedColors: ownerForm.allowedColors,
         createdAt: serverTimestamp()
       });
       setUploadProgress(100);
@@ -382,7 +434,8 @@ export function AgentPortal() {
           description: '',
           basePrice: 150,
           category: 'T-Shirts',
-          isPrivate: true
+          isPrivate: true,
+          allowedColors: FABRIC_COLORS.map(c => c.name)
         });
         setUploadProgress(0);
       }, 500);
@@ -416,6 +469,19 @@ export function AgentPortal() {
       toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
     } catch (error: any) {
       toast.error('Update failed: ' + error.message);
+    }
+  };
+
+  const handleUpdateProductStatus = async (productId: string, newStatus: 'approved' | 'rejected') => {
+    if (!isBrandOwner) return;
+    try {
+      await updateDoc(doc(db, 'products', productId), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Design ${newStatus === 'approved' ? 'Sanctified' : 'Purged'}`);
+    } catch (error: any) {
+      toast.error('Authority Override Failed: ' + error.message);
     }
   };
 
@@ -495,6 +561,7 @@ export function AgentPortal() {
           agentId: user.uid,
           agentName: user.displayName,
           mockupImage: await compressImage(`data:${file.type};base64,${base64Data}`),
+          allowedColors: FABRIC_COLORS.map(c => c.name),
           createdAt: serverTimestamp()
         });
         toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
@@ -681,6 +748,47 @@ export function AgentPortal() {
                                <option value="Exclusive">Exclusive</option>
                                <option value="Streetwear">Streetwear</option>
                              </select>
+                          </div>
+                       </div>
+
+                       <div className="space-y-4">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Allowed Fabric Spectrum</label>
+                          <div className="flex flex-wrap gap-4 p-4 bg-black/5 rounded-2xl border-2 border-black/5">
+                             {FABRIC_COLORS.map(color => (
+                                <button
+                                   key={color.name}
+                                   type="button"
+                                   onClick={() => {
+                                      const current = ownerForm.allowedColors || [];
+                                      if (current.includes(color.name)) {
+                                         if (current.length > 1) {
+                                            setOwnerForm({...ownerForm, allowedColors: current.filter(c => c !== color.name)});
+                                         } else {
+                                            toast.error('Identity requires at least one shade');
+                                         }
+                                      } else {
+                                         setOwnerForm({...ownerForm, allowedColors: [...current, color.name]});
+                                      }
+                                   }}
+                                   className={cn(
+                                      "group relative flex items-center space-x-3 px-4 py-3 rounded-xl border-2 transition-all",
+                                      ownerForm.allowedColors?.includes(color.name) 
+                                       ? "border-accent bg-accent/10 shadow-[0_0_15px_rgba(242,125,38,0.1)]" 
+                                       : "border-black/5 hover:border-black/20"
+                                   )}
+                                >
+                                   <div className="w-4 h-4 rounded-full shadow-inner border border-black/10" style={{ backgroundColor: color.hex }} />
+                                   <span className={cn(
+                                      "text-[10px] font-black uppercase tracking-widest transition-colors",
+                                      ownerForm.allowedColors?.includes(color.name) ? "text-accent" : "text-black/40"
+                                   )}>{color.name}</span>
+                                   {ownerForm.allowedColors?.includes(color.name) && (
+                                      <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-accent rounded-full flex items-center justify-center border-2 border-white shadow-lg">
+                                         <CheckCircle2 className="w-2.5 h-2.5 text-black" strokeWidth={4} />
+                                      </div>
+                                   )}
+                                </button>
+                             ))}
                           </div>
                        </div>
 
@@ -945,6 +1053,123 @@ export function AgentPortal() {
             {/* Referral Tracking Dashboard (Brand Owner Only) */}
             {isBrandOwner && (
               <div className="space-y-12">
+                {/* Design Authority Review */}
+                <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
+                      <div className="flex items-center space-x-6">
+                         <div className="bg-accent/20 p-5 rounded-3xl border border-accent/20">
+                            <ShieldCheck className="w-10 h-10 text-accent" />
+                         </div>
+                         <div>
+                            <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Design Authority Review</h2>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Sanctifying Agent Submissions</p>
+                         </div>
+                      </div>
+                      <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                         <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Pending Review</p>
+                         <p className="text-2xl font-mono font-black text-white">{pendingDesigns.length} Blueprints</p>
+                      </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+                    <AnimatePresence mode="popLayout">
+                      {pendingDesigns.length === 0 ? (
+                        <div className="col-span-full py-20 text-center glass rounded-[2rem]">
+                          <CheckCircle2 className="w-12 h-12 text-white/5 mx-auto mb-4" />
+                          <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Global catalog is fully synchronized. No pending blueprints.</p>
+                        </div>
+                      ) : (
+                        pendingDesigns.map((design) => {
+                          const [view, setView] = useState<'mockup' | 'studio'>('mockup');
+                          return (
+                            <motion.div 
+                              key={design.id}
+                              layout
+                              initial={{ opacity: 0, scale: 0.9 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 0.9 }}
+                              className="glass p-6 rounded-[2rem] border border-white/5 hover:border-accent/20 transition-all flex flex-col group"
+                            >
+                              <div className="relative aspect-square rounded-2xl overflow-hidden mb-6 bg-black/40">
+                                <AnimatePresence mode="wait">
+                                  <motion.img 
+                                    key={view}
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    src={view === 'mockup' ? design.mockupImage : design.studioImage || design.mockupImage} 
+                                    alt="" 
+                                    className={cn(
+                                      "w-full h-full object-cover transition-all",
+                                      view === 'mockup' ? "grayscale group-hover:grayscale-0" : ""
+                                    )} 
+                                  />
+                                </AnimatePresence>
+                                <div className="absolute top-4 right-4 flex space-x-2">
+                                  <button 
+                                    onClick={() => setView('mockup')}
+                                    className={cn(
+                                      "w-8 h-8 rounded-lg flex items-center justify-center backdrop-blur-xl border transition-all",
+                                      view === 'mockup' ? "bg-accent border-accent text-black" : "bg-black/40 border-white/10 text-white/40"
+                                    )}
+                                  >
+                                    <Grid3X3 className="w-3 h-3" />
+                                  </button>
+                                  <button 
+                                    onClick={() => setView('studio')}
+                                    className={cn(
+                                      "w-8 h-8 rounded-lg flex items-center justify-center backdrop-blur-xl border transition-all",
+                                      view === 'studio' ? "bg-accent border-accent text-black" : "bg-black/40 border-white/10 text-white/40"
+                                    )}
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-6 pt-12">
+                                  <p className="text-[8px] font-black uppercase tracking-widest text-accent mb-1">
+                                    {view === 'mockup' ? 'Creative Blueprint' : 'Studio Calibration'}
+                                  </p>
+                                  <p className="text-[10px] font-medium text-white/60 line-clamp-2 leading-relaxed">{design.description}</p>
+                                </div>
+                              </div>
+                              
+                              <div className="mb-8 px-2">
+                                 <p className="text-lg font-display font-black uppercase italic text-white truncate mb-1">{design.name}</p>
+                                 <div className="flex items-center justify-between">
+                                    <div>
+                                      <p className="text-[9px] font-black uppercase text-accent tracking-tighter italic">by {design.agentName || 'Unknown'}</p>
+                                      {design.studioImage && (
+                                        <p className="text-[7px] font-black uppercase text-green-500 tracking-widest flex items-center gap-1 mt-1">
+                                          <ShieldCheck className="w-2 h-2" /> Studio Shoot Uploaded
+                                        </p>
+                                      )}
+                                    </div>
+                                    <p className="text-[10px] font-mono font-bold text-white/40">{formatGHC(design.basePrice)}</p>
+                                 </div>
+                              </div>
+
+                              <div className="mt-auto grid grid-cols-2 gap-3">
+                                 <button 
+                                   onClick={() => handleUpdateProductStatus(design.id, 'approved')}
+                                   className="py-4 bg-accent text-black text-[9px] font-black uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-[0_10px_20px_rgba(242,125,38,0.2)]"
+                                 >
+                                   Sanctify
+                                 </button>
+                                 <button 
+                                   onClick={() => handleUpdateProductStatus(design.id, 'rejected')}
+                                   className="py-4 bg-white/5 text-red-500 text-[9px] font-black uppercase tracking-widest rounded-xl border border-red-500/10 hover:bg-red-500 hover:text-white transition-all shadow-xl"
+                                 >
+                                   Purge
+                                 </button>
+                              </div>
+                            </motion.div>
+                          );
+                        })
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+
                 {/* Agent Performance Leaderboard */}
                 <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
@@ -969,10 +1194,10 @@ export function AgentPortal() {
                         <thead>
                           <tr className="border-b border-white/10 bg-white/5">
                             <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Agent Authority</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Referrals</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Revenue Impact</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Commission Paid</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Growth Rate</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Referral Velocity</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Design Authority</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Revenue Breakdown</th>
+                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Total Ecosystem Yield</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -991,27 +1216,50 @@ export function AgentPortal() {
                                       {index + 1}
                                     </div>
                                     <div>
-                                      <p className="text-base font-bold text-white group-hover:text-accent transition-colors">{agent.name || 'Anonymous Agent'}</p>
-                                      <p className="text-[9px] font-black uppercase text-white/20 tracking-tighter">{agent.email}</p>
+                                      <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{agent.name || 'Anonymous Agent'}</p>
+                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter">{agent.email}</p>
                                     </div>
                                   </div>
                                 </td>
-                                <td className="px-10 py-8 text-center text-lg font-mono font-black text-accent">{agent.referralCount}</td>
-                                <td className="px-10 py-8">
-                                  <p className="text-base font-mono font-bold text-white">{formatGHC(agent.totalReferralValue)}</p>
-                                  <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Total Transaction Vol</p>
-                                </td>
-                                <td className="px-10 py-8">
-                                  <p className="text-base font-mono font-bold text-green-400">{formatGHC(agent.netCommission)}</p>
-                                  <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">10% Deposit Share</p>
-                                </td>
-                                <td className="px-10 py-8">
-                                   <div className="flex items-center space-x-3">
-                                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                         <div className="h-full bg-accent" style={{ width: `${Math.min(100, (agent.referralCount / 10) * 100)}%` }} />
-                                      </div>
-                                      <span className="text-[10px] font-black text-white/40">{Math.round((agent.referralCount / 10) * 100)}%</span>
+                                <td className="px-10 py-8 text-center border-x border-white/5">
+                                   <div className="flex flex-col items-center">
+                                      <p className="text-lg font-mono font-black text-accent">{agent.successfulCount}/{agent.referralCount}</p>
+                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Closed/Total</p>
                                    </div>
+                                </td>
+                                <td className="px-10 py-8 text-center border-x border-white/5">
+                                   <div className="flex flex-col items-center">
+                                      <p className="text-lg font-mono font-black text-white">{agent.approvedDesigns}/{agent.designCount}</p>
+                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Approved/Total</p>
+                                      <div className="mt-2 w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                                        <div className="h-full bg-accent" style={{ width: `${agent.approvalRate}%` }} />
+                                      </div>
+                                   </div>
+                                </td>
+                                <td className="px-10 py-8">
+                                  <div className="space-y-2">
+                                    <div className="flex justify-between items-center bg-white/5 px-3 py-1 rounded-lg">
+                                      <span className="text-[8px] font-black uppercase text-white/40">Referral</span>
+                                      <span className="text-[10px] font-mono font-bold text-white">{formatGHC(agent.referralRevenue)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-white/5 px-3 py-1 rounded-lg">
+                                      <span className="text-[8px] font-black uppercase text-white/40">Design Sales</span>
+                                      <span className="text-[10px] font-mono font-bold text-accent">{formatGHC(agent.designRevenue)}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-10 py-8">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <p className="text-lg font-mono font-black text-white">{formatGHC(agent.totalRevenue)}</p>
+                                    <span className="text-[10px] font-black text-accent">{Math.round(agent.growthRate)}% Score</span>
+                                  </div>
+                                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                     <motion.div 
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${agent.growthRate}%` }}
+                                        className="h-full bg-accent" 
+                                     />
+                                  </div>
                                 </td>
                               </tr>
                             ))

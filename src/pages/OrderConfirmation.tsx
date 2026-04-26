@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   CheckCircle2, 
@@ -14,8 +14,8 @@ import {
   CreditCard,
   Share2,
   X,
-  Facebook,
-  Twitter
+  Search,
+  ChevronRight
 } from 'lucide-react';
 import { doc, onSnapshot, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -33,6 +33,7 @@ const STEPS = [
 
 export function OrderConfirmationPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { user, isBrandOwner } = useAuth();
   const [order, setOrder] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -40,12 +41,22 @@ export function OrderConfirmationPage() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [trackId, setTrackId] = useState('');
+
+  const handleTrack = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trackId.trim()) return;
+    navigate(`/order/${trackId.trim().toUpperCase()}`);
+    setTrackId('');
+  };
 
   useEffect(() => {
     if (!id) return;
     const unsubscribe = onSnapshot(doc(db, 'orders', id), (doc) => {
       if (doc.exists()) {
         setOrder({ id: doc.id, ...doc.data() });
+      } else {
+        setOrder(null);
       }
       setLoading(false);
     });
@@ -463,6 +474,55 @@ export function OrderConfirmationPage() {
           </div>
         </div>
       </div>
+
+      {/* Global Order Tracking Segment */}
+      <section className="mt-24 pt-24 border-t border-white/5 pb-16">
+        <div className="max-w-4xl mx-auto px-4">
+          <div className="glass p-12 rounded-[3.5rem] border border-white/10 relative overflow-hidden group">
+            <div className="absolute -top-24 -right-24 w-64 h-64 bg-accent/5 blur-[100px] rounded-full group-hover:bg-accent/10 transition-colors" />
+            
+            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+              <div>
+                <div className="flex items-center space-x-3 mb-6">
+                  <div className="w-10 h-10 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+                    <Search className="w-5 h-5 text-accent" />
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-editorial text-white/40">Authority Oversight</span>
+                </div>
+                <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white mb-4">
+                  Track Another <br/> Blueprint
+                </h3>
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/20 leading-relaxed italic">
+                  Enter an order identifier to intercept its current manufacturing and logistics stream.
+                </p>
+              </div>
+
+              <form onSubmit={handleTrack} className="space-y-4">
+                <div className="relative group/input">
+                  <input 
+                    type="text" 
+                    value={trackId}
+                    onChange={(e) => setTrackId(e.target.value)}
+                    placeholder="ENTER ORDER ID (E.G. KB-XXXX)"
+                    className="w-full bg-background border-2 border-white/5 rounded-2xl p-6 text-xs font-mono font-bold uppercase tracking-widest text-white focus:border-accent outline-none transition-all placeholder:text-white/5 group-hover/input:border-white/10"
+                  />
+                  <div className="absolute inset-y-0 right-4 flex items-center">
+                    <button 
+                      type="submit"
+                      className="p-3 bg-white/5 hover:bg-accent hover:text-black rounded-xl transition-all group/btn"
+                    >
+                      <ChevronRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[8px] font-black uppercase tracking-widest text-white/10 text-center">
+                  Terminal access requires a valid authority hash.
+                </p>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Share Modal */}
       <AnimatePresence>

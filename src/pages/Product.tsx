@@ -20,7 +20,11 @@ import {
   Link as LinkIcon,
   Wand2,
   Star,
-  MessageSquare
+  MessageSquare,
+  Grid3X3,
+  Camera,
+  Wind,
+  Layers
 } from 'lucide-react';
 import { doc, getDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
@@ -32,12 +36,14 @@ import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 import { GSM } from '@/src/types';
 
+import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
+
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
     <div className="max-w-7xl mx-auto">
       <div className="h-4 w-48 bg-white/5 rounded-full mb-20" />
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-24">
-        <div className="lg:col-span-7 space-y-10">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-24 items-start">
+        <div className="lg:col-span-7 lg:sticky lg:top-24 space-y-10">
           <div className="aspect-[4/5] bg-white/5 rounded-[3.5rem]" />
           <div className="flex justify-center space-x-4">
             <div className="w-20 h-24 bg-white/5 rounded-2xl" />
@@ -67,11 +73,27 @@ const ProductSkeleton = () => (
   </div>
 );
 
-const GSM_PROFILES: Record<string, { label: string; sub: string }> = {
-  '230': { label: 'Precision', sub: '230 GSM • Breathable Efficiency' },
-  '260': { label: 'Standard', sub: '260 GSM • Professional Choice' },
-  '320': { label: 'Armor', sub: '320 GSM • Ultra Heavyweight' },
-  'standard': { label: 'Standard', sub: 'Factory Regular' }
+const GSM_PROFILES: Record<string, { label: string; sub: string; icon: any }> = {
+  '230': { 
+    label: 'Precision', 
+    sub: 'Structural Efficiency',
+    icon: Wind
+  },
+  '260': { 
+    label: 'Standard', 
+    sub: 'Command Presence',
+    icon: Layers
+  },
+  '320': { 
+    label: 'Armor', 
+    sub: 'Ultima Weight',
+    icon: ShieldCheck
+  },
+  'standard': { 
+    label: 'Standard', 
+    sub: 'Factory Grade',
+    icon: Layers
+  }
 };
 
 export function ProductPage() {
@@ -79,6 +101,7 @@ export function ProductPage() {
   const navigate = useNavigate();
   const { user, isBrandOwner } = useAuth();
   const { addItem } = useCart();
+  const { addProduct } = useRecentlyViewed();
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [imageLoading, setImageLoading] = useState(true);
@@ -122,10 +145,12 @@ export function ProductPage() {
         const docRef = doc(db, 'products', id);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setProduct({ id: docSnap.id, ...docSnap.data() });
+          const fetchedProduct = { id: docSnap.id, ...docSnap.data() };
+          setProduct(fetchedProduct);
+          addProduct(docSnap.id);
         } else {
           // Fallback if not in DB yet (for dev)
-          setProduct({
+          const fallbackProduct = {
             id: id,
             name: "The Dynasty Tee",
             category: "T-Shirts",
@@ -133,7 +158,9 @@ export function ProductPage() {
             mockupImage: "https://picsum.photos/seed/k1/800/1000",
             studioImage: "https://picsum.photos/seed/studio/800/1000",
             gsmOptions: ['230', '260', '320']
-          });
+          };
+          setProduct(fallbackProduct);
+          addProduct(id);
         }
       } catch (error) {
         toast.error('Failed to load product');
@@ -179,23 +206,44 @@ export function ProductPage() {
   const deposit = price * DEPOSIT_PERCENTAGE;
   const balance = price - deposit;
 
+  const availableColors = useMemo(() => {
+    if (product?.allowedColors && Array.isArray(product.allowedColors) && product.allowedColors.length > 0) {
+      return FABRIC_COLORS.filter(color => product.allowedColors.includes(color.name));
+    }
+    return FABRIC_COLORS;
+  }, [product]);
+
+  // Set initial color when product or available colors change
+  useEffect(() => {
+    if (availableColors.length > 0) {
+      const currentExists = availableColors.find(c => c.name === selectedColor.name);
+      if (!currentExists) {
+        setSelectedColor(availableColors[0]);
+      }
+    }
+  }, [availableColors, product]);
+
   const activeImage = useMemo(() => {
     if (!product) return '';
     
-    // 1. High Priority Match: Colour-specific studio shot from the ledger
-    if (product.colorStudioImages?.[selectedColor.name]) {
-      return product.colorStudioImages[selectedColor.name];
+    if (viewMode === 'studio') {
+      // 1. High Priority Match: Colour-specific studio shot from the ledger
+      if (product.colorStudioImages?.[selectedColor.name]) {
+        return product.colorStudioImages[selectedColor.name];
+      }
+      
+      return product.studioImage;
     }
-    
+
+    // Mockup Mode (Blueprint)
     // 2. Secondary Match: Colour-specific pre-rendered mockup
     if (product.colorImages?.[selectedColor.name]) {
       return product.colorImages[selectedColor.name];
     }
 
     // 3. Authority Directive: Fallback to neutral blueprint with CSS color injection
-    // This ensures the visual always reflects the specific fabric shade selected
     return product.mockupImage;
-  }, [product, selectedColor]);
+  }, [product, selectedColor, viewMode]);
 
   // Sync view mode indicator with selected shade asset availability
   useEffect(() => {
@@ -270,19 +318,22 @@ export function ProductPage() {
       
       const prompt = `
         You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
-        Your mission is to transform the provided product description into a powerful, evocative brand narrative that commands respect.
+        Your mission is to forge a unique, commanding product narrative for "${product.name}".
         
-        Themes to emphasize:
-        1. "Ghanaian Craftsmanship": The soul of Accra, the precision of traditional heritage met with modern industrial standards.
-        2. "Streetwear Authority": The unapologetic stance of a leader. This isn't just clothing; it's a social contract of power.
+        Product Details:
+        - Category: ${product.category}
+        - Fabric Shade: ${selectedColor.name}
+        - Structural Sizing: ${selectedSize}
+        - Fabric Weight: ${selectedGsm} GSM
+        - Base Blueprint: ${product.description}
         
-        Style:
-        - Use bold, architectural language.
-        - Evocative and rhythmic.
-        - Concise (3-4 sentences total).
+        Brand Guidelines:
+        - Theme: "Ghanaian Craftsmanship" (soul of Accra, precision of heritage) meets "Streetwear Authority" (unapologetic leadership).
+        - Vocabulary: Architectural, authoritative, evocative, rhythmic.
+        - Length: Exactly one punchy, high-impact paragraph (approx 40-60 words).
+        - Goal: Make the customer feel like they are commissioning a royal asset.
         
-        Original Description: ${product.description}
-        Product Name: ${product.name}
+        Note: Specifically reference the color "${selectedColor.name}" and the "${selectedGsm} GSM" weight to make the narrative feel custom-forged for this specific selection.
       `;
 
       const response = await ai.models.generateContent({
@@ -293,6 +344,14 @@ export function ProductPage() {
       if (response.text) {
         setEnhancedDescription(response.text.trim());
         toast.success('Narrative Forged');
+        
+        // Authority Directive: Focus the viewport on the newly forged narrative
+        setTimeout(() => {
+          const section = document.getElementById('ai-narrative-section');
+          if (section) {
+            section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 300);
       }
     } catch (error: any) {
       console.error('Enhancement Error:', error);
@@ -398,9 +457,9 @@ export function ProductPage() {
           <span className="text-white/60">{product.name}</span>
         </nav>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-24">
-          {/* Left: Image Gallery (Span 7) */}
-          <div className="lg:col-span-7 space-y-10">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-16 lg:gap-24 items-start">
+          {/* Left: Image Gallery (Span 7) - Sticky on Desktop */}
+          <div className="lg:col-span-7 lg:sticky lg:top-24 space-y-10">
             <div 
               className="relative aspect-[4/5] overflow-hidden rounded-[3rem] bg-[#1A1A1B] shadow-[0_0_80px_rgba(0,0,0,0.5)] cursor-zoom-in group/main"
               onMouseMove={(e) => {
@@ -482,26 +541,36 @@ export function ProductPage() {
                 </div>
               </div>
 
-              {/* View Mode Toggle */}
-              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex p-1.5 bg-background/40 backdrop-blur-3xl rounded-full border border-white/10 shadow-2xl z-20">
-                <button
-                  onClick={() => setViewMode('mockup')}
-                  className={cn(
-                    "px-8 py-2.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
-                    viewMode === 'mockup' ? "bg-white text-black shadow-xl" : "text-white/60 hover:text-white"
-                  )}
-                >
-                  Blueprint
-                </button>
-                <button
-                  onClick={() => setViewMode('studio')}
-                  className={cn(
-                    "px-8 py-2.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
-                    viewMode === 'studio' ? "bg-white text-black shadow-xl" : "text-white/60 hover:text-white"
-                  )}
-                >
-                  Studio
-                </button>
+              {/* View Mode Toggle - Architectural Style */}
+              <div className="absolute top-1/2 -translate-y-1/2 left-8 flex flex-col gap-3 py-4 z-20">
+                <div className="flex flex-col gap-2 p-1.5 glass rounded-2xl border border-white/10 shadow-2xl">
+                  <button
+                    onClick={() => setViewMode('mockup')}
+                    className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center transition-all group/btn",
+                      viewMode === 'mockup' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
+                    )}
+                    title="Mockup Mode"
+                  >
+                    <Grid3X3 className="w-5 h-5" />
+                    <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
+                      Blueprint Mode
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode('studio')}
+                    className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center transition-all group/btn",
+                      viewMode === 'studio' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
+                    )}
+                    title="Studio Mode"
+                  >
+                    <Camera className="w-5 h-5" />
+                    <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
+                      Studio Calibration
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -515,7 +584,12 @@ export function ProductPage() {
                     viewMode === 'mockup' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
-                  <img src={product.mockupImage} alt="Mockup" className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" referrerPolicy="no-referrer" />
+                  <img 
+                    src={product.colorImages?.[selectedColor.name] || product.mockupImage} 
+                    alt="Mockup" 
+                    className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
+                    referrerPolicy="no-referrer" 
+                  />
                   <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
                     <span className="text-[6px] font-black uppercase tracking-widest text-white">Blueprint</span>
                   </div>
@@ -527,7 +601,12 @@ export function ProductPage() {
                     viewMode === 'studio' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
-                  <img src={product.studioImage} alt="Studio" className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" referrerPolicy="no-referrer" />
+                  <img 
+                    src={product.colorStudioImages?.[selectedColor.name] || product.studioImage} 
+                    alt="Studio" 
+                    className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
+                    referrerPolicy="no-referrer" 
+                  />
                   <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
                     <span className="text-[6px] font-black uppercase tracking-widest text-white">Studio</span>
                   </div>
@@ -552,7 +631,7 @@ export function ProductPage() {
           </div>
 
           {/* Right: Info & Config (Span 5) */}
-          <div className="lg:col-span-5 flex flex-col justify-center">
+          <div className="lg:col-span-5 flex flex-col pt-4">
             <div className="mb-12 relative">
               <span className="text-accent text-[10px] font-black uppercase tracking-editorial mb-4 block">
                   {product.category} Series
@@ -662,6 +741,36 @@ export function ProductPage() {
               </div>
             </div>
 
+            {/* View Architecture Switcher */}
+            <div className="mb-12">
+               <div className="flex items-center space-x-2 mb-4">
+                  <Maximize2 className="w-3 h-3 text-accent" />
+                  <span className="text-[10px] font-black uppercase tracking-editorial text-white/40">Visual Calibration</span>
+               </div>
+               <div className="flex p-1 bg-white/5 rounded-2xl border border-white/5 space-x-1">
+                  <button
+                    onClick={() => setViewMode('mockup')}
+                    className={cn(
+                      "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2",
+                      viewMode === 'mockup' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
+                    )}
+                  >
+                    <Grid3X3 className="w-3.5 h-3.5" />
+                    Blueprint
+                  </button>
+                  <button
+                    onClick={() => setViewMode('studio')}
+                    className={cn(
+                      "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2",
+                      viewMode === 'studio' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
+                    )}
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    Studio Shot
+                  </button>
+               </div>
+            </div>
+
             {/* Price Card */}
             <div className="mb-12 glass p-10 rounded-[3rem] relative overflow-hidden group hover:border-accent/40 transition-all duration-500">
                <div className="absolute top-0 right-0 w-1/3 h-full opacity-5 group-hover:opacity-10 transition-opacity">
@@ -698,27 +807,63 @@ export function ProductPage() {
                       </div>
                       <span className="text-[8px] font-black text-accent uppercase tracking-widest italic">Industrial Grade</span>
                    </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                     {(product.gsmOptions || ['230', '260', '320']).map(gsm => {
-                      const profile = GSM_PROFILES[gsm as string] || { label: gsm, sub: 'Specific Weight' };
+                      const profile = GSM_PROFILES[gsm as string] || { label: gsm, sub: 'Specific Weight', icon: Layers };
+                      const Icon = profile.icon;
+                      const isActive = selectedGsm === gsm;
+
                       return (
                         <button
                           key={gsm}
                           onClick={() => setSelectedGsm(gsm as GSM)}
                           className={cn(
-                            "group relative py-6 px-6 rounded-3xl border-2 transition-all flex flex-col items-center justify-center overflow-hidden text-center",
-                            selectedGsm === gsm 
-                              ? "border-accent bg-white text-black shadow-[0_0_30px_rgba(255,255,255,0.1)] scale-[1.02]" 
-                              : "border-white/5 bg-white/5 text-white/40 hover:border-white/20"
+                            "group relative py-8 px-6 rounded-[2.5rem] border-2 transition-all duration-500 overflow-hidden flex flex-col items-center text-center",
+                            isActive 
+                              ? "border-accent bg-accent/5 shadow-[0_0_50px_rgba(242,125,38,0.15)] scale-105" 
+                              : "border-white/5 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/10"
                           )}
                         >
-                          <span className="font-black text-[14px] tracking-widest mb-1 uppercase italic">{profile.label}</span>
-                          <span className="text-[7px] font-black uppercase tracking-widest opacity-60 leading-tight">{profile.sub}</span>
-                          {selectedGsm === gsm && (
-                             <motion.div 
-                               layoutId="gsm-active"
-                               className="absolute inset-0 bg-accent/5 pointer-events-none"
-                             />
+                          {/* Background Accent */}
+                          <div className={cn(
+                            "absolute inset-0 bg-gradient-to-br from-accent/5 via-transparent to-transparent opacity-0 transition-opacity duration-700",
+                            isActive ? "opacity-100" : "group-hover:opacity-50"
+                          )} />
+                          
+                          <div className={cn(
+                            "p-4 rounded-2xl mb-4 bg-white/5 border border-white/5 transition-all duration-500",
+                            isActive ? "bg-accent/20 border-accent/20 scale-110" : "group-hover:scale-110"
+                          )}>
+                            <Icon className={cn(
+                              "w-6 h-6 transition-all duration-500",
+                              isActive ? "text-accent" : "text-white/20 group-hover:text-white/40"
+                            )} />
+                          </div>
+
+                          <div className="relative z-10 space-y-1">
+                            <span className={cn(
+                              "block font-display font-black text-lg uppercase italic tracking-tighter transition-colors",
+                              isActive ? "text-white" : "text-white/40 group-hover:text-white/60"
+                            )}>
+                              {profile.label}
+                            </span>
+                            <div className="flex flex-col items-center">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-accent mb-1">
+                                {gsm} GSM
+                              </span>
+                              <span className="text-[7px] font-black uppercase tracking-widest text-white/20 leading-none">
+                                {profile.sub}
+                              </span>
+                            </div>
+                          </div>
+
+                          {isActive && (
+                            <motion.div 
+                              layoutId="gsm-active-highlight"
+                              className="absolute bottom-0 left-0 right-0 h-1 bg-accent"
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                            />
                           )}
                         </button>
                       );
@@ -735,7 +880,7 @@ export function ProductPage() {
                     <span className="text-[9px] font-black text-white italic tracking-widest uppercase">{selectedColor.name}</span>
                   </div>
                   <div className="flex flex-wrap gap-5">
-                    {FABRIC_COLORS.map(color => (
+                    {availableColors.map(color => (
                       <button
                         key={color.name}
                         onClick={() => setSelectedColor(color)}
@@ -861,6 +1006,7 @@ export function ProductPage() {
         <AnimatePresence>
           {enhancedDescription && (
             <motion.div 
+              id="ai-narrative-section"
               initial={{ opacity: 0, y: 40 }}
               whileInView={{ opacity: 1, y: 0 }}
               className="mt-32 relative py-20 px-4 md:px-20 overflow-hidden rounded-[4rem] group"

@@ -36,8 +36,8 @@ service cloud.firestore {
         && data.basePrice is number && data.basePrice >= 0
         && data.status in ["pending", "approved", "rejected"]
         && (data.status == "pending" || isAdmin()) // Only admin can approve
-        && (data.agentId == null || data.agentId == request.auth.uid)
-        && data.createdAt == request.time;
+        && (data.agentId == null || data.agentId == request.auth.uid || isAdmin())
+        && (data.createdAt == request.time || data.createdAt == existing().createdAt);
     }
 
     function isValidOrder(data) {
@@ -80,11 +80,11 @@ service cloud.firestore {
       allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == request.time;
       allow update: if (isAdmin() || (isOwner(existing().agentId) && existing().status == "pending"))
         && isValidProduct(incoming())
-        && incoming().createdAt == existing().createdAt
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'mockupImage', 'studioImage'])) ||
-          (isOwner(existing().agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice']))
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'mockupImage', 'studioImage', 'isPrivate', 'updatedAt', 'allowedColors', 'colorStudioImages', 'colorImages', 'name', 'description', 'basePrice'])) ||
+          (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
         );
+      allow delete: if isAdmin() || isOwner(existing().agentId);
     }
 
     match /orders/{orderId} {
