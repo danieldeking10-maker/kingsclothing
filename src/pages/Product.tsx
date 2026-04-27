@@ -8,6 +8,7 @@ import {
   ShieldCheck, 
   Truck, 
   Maximize2, 
+  ZoomIn,
   Share2,
   RefreshCw,
   Phone,
@@ -24,9 +25,10 @@ import {
   Grid3X3,
   Camera,
   Wind,
-  Layers
+  Layers,
+  Edit3
 } from 'lucide-react';
-import { doc, getDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
@@ -105,18 +107,19 @@ export function ProductPage() {
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [imageLoading, setImageLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'mockup' | 'studio'>('studio');
+  const [viewMode, setViewMode] = useState<'mockup' | 'studio' | 'blueprint'>('studio');
   const [selectedGsm, setSelectedGsm] = useState<GSM>('260');
   const [selectedColor, setSelectedColor] = useState(FABRIC_COLORS[0]);
   const [selectedSize, setSelectedSize] = useState('L');
   const [isOrdering, setIsOrdering] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
   const [referralId, setReferralId] = useState<string | null>(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
   const [isHovering, setIsHovering] = useState(false);
   const [reviews, setReviews] = useState<any[]>([]);
   const [newRating, setNewRating] = useState(5);
@@ -170,9 +173,15 @@ export function ProductPage() {
     };
     fetchProduct();
 
-    // Capture referral ID
+    // Capture referral ID & GSM
     const params = new URLSearchParams(window.location.search);
     const ref = params.get('ref');
+    const gsmParam = params.get('gsm') as GSM;
+
+    if (gsmParam && ['230', '260', '320', 'standard'].includes(gsmParam)) {
+      setSelectedGsm(gsmParam);
+    }
+
     if (ref) {
       setReferralId(ref);
       sessionStorage.setItem('last_referral_id', ref);
@@ -226,16 +235,37 @@ export function ProductPage() {
   const activeImage = useMemo(() => {
     if (!product) return '';
     
+    const colorGsmKey = `${selectedColor.name}-${selectedGsm}`;
+
     if (viewMode === 'studio') {
-      // 1. High Priority Match: Colour-specific studio shot from the ledger
+      // 1. Ultra-Priority: GSM-Color Specific Studio Asset
+      if (product.colorStudioImages?.[colorGsmKey]) {
+        return product.colorStudioImages[colorGsmKey];
+      }
+      // 2. High Priority Match: Colour-specific studio shot from the ledger
       if (product.colorStudioImages?.[selectedColor.name]) {
         return product.colorStudioImages[selectedColor.name];
       }
-      
-      return product.studioImage;
+      return product.studioImage || product.mockupImage;
     }
 
-    // Mockup Mode (Blueprint)
+    if (viewMode === 'blueprint') {
+      // 1. Ultra-Priority: GSM-Color Specific Blueprint Asset
+      if (product.colorBlueprints?.[colorGsmKey]) {
+        return product.colorBlueprints[colorGsmKey];
+      }
+      // 2. Technical Blueprint Match
+      if (product.colorBlueprints?.[selectedColor.name]) {
+        return product.colorBlueprints[selectedColor.name];
+      }
+      return product.blueprintImage || product.mockupImage;
+    }
+
+    // Mockup Mode (Blueprint in UI)
+    // 1. Ultra-Priority: GSM-Color Specific Mockup Asset
+    if (product.colorImages?.[colorGsmKey]) {
+      return product.colorImages[colorGsmKey];
+    }
     // 2. Secondary Match: Colour-specific pre-rendered mockup
     if (product.colorImages?.[selectedColor.name]) {
       return product.colorImages[selectedColor.name];
@@ -243,7 +273,7 @@ export function ProductPage() {
 
     // 3. Authority Directive: Fallback to neutral blueprint with CSS color injection
     return product.mockupImage;
-  }, [product, selectedColor, viewMode]);
+  }, [product, selectedColor, viewMode, selectedGsm]);
 
   // Sync view mode indicator with selected shade asset availability
   useEffect(() => {
@@ -400,6 +430,21 @@ export function ProductPage() {
     }
   };
 
+  const handleUpdateGsmPrices = async (newGsmPrices: Record<string, number>) => {
+    if (!id || !isBrandOwner) return;
+    try {
+      await updateDoc(doc(db, 'products', id), { 
+        gsmPrices: newGsmPrices,
+        basePrice: newGsmPrices[selectedGsm] || product.basePrice
+      });
+      setProduct({ ...product, gsmPrices: newGsmPrices });
+      toast.success('Economic Logic Updated');
+      setIsPricingModalOpen(false);
+    } catch (error) {
+      toast.error('Failed to update economic logic');
+    }
+  };
+
   const handleSubmitReview = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) {
@@ -501,7 +546,7 @@ export function ProductPage() {
               )}
               <AnimatePresence mode="wait">
                 <motion.div
-                  key={viewMode + selectedColor.name} // Include color in key for fresh transitions
+                  key={viewMode + selectedColor.name}
                   className="w-full h-full relative"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -512,32 +557,54 @@ export function ProductPage() {
                     src={activeImage}
                     onLoad={() => setImageLoading(false)}
                     alt={product.name}
-                    className="w-full h-full object-cover transition-all duration-300 ease-out"
+                    className="w-full h-full object-cover"
                     style={{
                       transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
-                      scale: isHovering ? 1.8 : 1,
-                      filter: isHovering ? 'grayscale(0) brightness(1)' : 'grayscale(0.5) brightness(0.9)'
+                    }}
+                    animate={{
+                      scale: isHovering ? 2.2 : 1,
+                      filter: isHovering ? 'brightness(1.1) contrast(1.1)' : 'brightness(0.9) contrast(1)',
+                    }}
+                    transition={{
+                      scale: { type: "spring", stiffness: 100, damping: 20 },
+                      filter: { duration: 0.4 }
                     }}
                     referrerPolicy="no-referrer"
                   />
                   
-                  {/* Digital Fabric Dye Overlay - Activates when no color-specific image assets are detected in the ledger */}
+                  {/* Digital Fabric Dye Overlay */}
                   {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
                     <motion.div 
                       key={`overlay-${selectedColor.name}`}
                       initial={{ opacity: 0 }}
-                      animate={{ opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4 }}
+                      animate={{ 
+                        opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
+                        scale: isHovering ? 2.2 : 1
+                      }}
+                      style={{ 
+                        backgroundColor: selectedColor.hex,
+                        transformOrigin: `${mousePos.x}% ${mousePos.y}%`
+                      }}
+                      transition={{
+                        scale: { type: "spring", stiffness: 100, damping: 20 }
+                      }}
                       className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
-                      style={{ backgroundColor: selectedColor.hex }}
                     />
                   )}
                 </motion.div>
               </AnimatePresence>
 
-              {/* Zoom Trigger Button Overlay */}
-              <div className="absolute top-8 right-8 z-20 opacity-0 group-hover/main:opacity-100 transition-opacity">
-                <div className="bg-background/40 backdrop-blur-xl p-4 rounded-2xl border border-white/10 text-white">
-                  <Maximize2 className="w-5 h-5" />
+              {/* Zoom Indicator */}
+              <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
+                <div className={cn(
+                  "px-4 py-2 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full transition-all duration-500 flex items-center gap-2",
+                  isHovering ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+                )}>
+                  <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-widest text-accent">High-Def Lens Active</span>
+                </div>
+                <div className="bg-background/40 backdrop-blur-xl p-4 rounded-2xl border border-white/10 text-white hover:bg-accent hover:text-black transition-all group-hover/main:opacity-100 opacity-0">
+                  {isHovering ? <Maximize2 className="w-5 h-5" /> : <ZoomIn className="w-5 h-5" />}
                 </div>
               </div>
 
@@ -554,7 +621,7 @@ export function ProductPage() {
                   >
                     <Grid3X3 className="w-5 h-5" />
                     <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
-                      Blueprint Mode
+                      Design Mode
                     </span>
                   </button>
                   <button
@@ -570,12 +637,25 @@ export function ProductPage() {
                       Studio Calibration
                     </span>
                   </button>
+                  <button
+                    onClick={() => setViewMode('blueprint')}
+                    className={cn(
+                      "w-12 h-12 rounded-xl flex items-center justify-center transition-all group/btn",
+                      viewMode === 'blueprint' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
+                    )}
+                    title="Tech Blueprint"
+                  >
+                    <Maximize2 className="w-5 h-5" />
+                    <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
+                      Tech Sheet
+                    </span>
+                  </button>
                 </div>
               </div>
             </div>
 
             {/* Thumbnail Gallery */}
-            {product.studioImage && (
+            {(product.studioImage || product.colorStudioImages?.[selectedColor.name]) && (
               <div className="flex justify-center space-x-4">
                 <button 
                   onClick={() => setViewMode('mockup')}
@@ -611,6 +691,25 @@ export function ProductPage() {
                     <span className="text-[6px] font-black uppercase tracking-widest text-white">Studio</span>
                   </div>
                 </button>
+                {(product.colorBlueprints?.[selectedColor.name]) && (
+                  <button 
+                    onClick={() => setViewMode('blueprint')}
+                    className={cn(
+                      "w-20 h-24 rounded-2xl overflow-hidden border-2 transition-all duration-500 relative group/thumb",
+                      viewMode === 'blueprint' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
+                    )}
+                  >
+                    <img 
+                      src={product.colorBlueprints[selectedColor.name]} 
+                      alt="Tech" 
+                      className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
+                      referrerPolicy="no-referrer" 
+                    />
+                    <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                      <span className="text-[6px] font-black uppercase tracking-widest text-white">Tech</span>
+                    </div>
+                  </button>
+                )}
               </div>
             )}
 
@@ -633,9 +732,27 @@ export function ProductPage() {
           {/* Right: Info & Config (Span 5) */}
           <div className="lg:col-span-5 flex flex-col pt-4">
             <div className="mb-12 relative">
-              <span className="text-accent text-[10px] font-black uppercase tracking-editorial mb-4 block">
-                  {product.category} Series
-              </span>
+              <div className="flex items-center gap-4 mb-4">
+                <span className="text-accent text-[10px] font-black uppercase tracking-editorial block">
+                    {product.category} Series
+                </span>
+                {reviews.length > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Star 
+                          key={i} 
+                          className={cn(
+                            "w-2.5 h-2.5", 
+                            i < Math.round(averageRating) ? "text-accent fill-accent" : "text-white/10"
+                          )} 
+                        />
+                      ))}
+                    </div>
+                    <span className="text-[8px] font-black uppercase text-white/40 tracking-widest">{reviews.length} Broadcasts</span>
+                  </div>
+                )}
+              </div>
               <h1 className="text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.8] mb-8 relative z-10">
                 {product.name}
               </h1>
@@ -756,7 +873,7 @@ export function ProductPage() {
                     )}
                   >
                     <Grid3X3 className="w-3.5 h-3.5" />
-                    Blueprint
+                    Design
                   </button>
                   <button
                     onClick={() => setViewMode('studio')}
@@ -766,7 +883,17 @@ export function ProductPage() {
                     )}
                   >
                     <Camera className="w-3.5 h-3.5" />
-                    Studio Shot
+                    Studio
+                  </button>
+                  <button
+                    onClick={() => setViewMode('blueprint')}
+                    className={cn(
+                      "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2",
+                      viewMode === 'blueprint' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
+                    )}
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    Tech
                   </button>
                </div>
             </div>
@@ -781,6 +908,16 @@ export function ProductPage() {
                   <h2 className="text-6xl font-display font-black text-white italic tracking-tighter mb-8 group-hover:text-accent transition-colors">
                     {formatGHC(price)}
                   </h2>
+                  
+                  {isBrandOwner && (
+                    <button 
+                      onClick={() => setIsPricingModalOpen(true)}
+                      className="absolute top-8 right-8 p-3 rounded-2xl bg-accent text-black hover:scale-110 transition-all shadow-xl flex items-center gap-2 group/edit"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                      <span className="text-[8px] font-black uppercase tracking-widest hidden group-hover/edit:block">Edit Price Logic</span>
+                    </button>
+                  )}
                   
                   <div className="grid grid-cols-2 gap-8 pt-8 border-t border-white/5">
                      <div className="space-y-1">
@@ -1060,45 +1197,68 @@ export function ProductPage() {
                        </p>
                     </div>
 
-                    <form onSubmit={handleSubmitReview} className="space-y-8">
-                       <div className="space-y-4">
-                          <p className="text-[9px] font-black uppercase tracking-widest text-white/20 italic ml-4">Quality Rating</p>
-                          <div className="flex space-x-4">
-                             {[1, 2, 3, 4, 5].map((star) => (
-                               <button
-                                 key={star}
-                                 type="button"
-                                 onClick={() => setNewRating(star)}
-                                 className={cn(
-                                   "w-12 h-12 rounded-2xl flex items-center justify-center transition-all border",
-                                   newRating >= star ? "border-accent bg-accent/10 text-accent shadow-[0_0_20px_rgba(242,125,38,0.2)]" : "border-white/5 text-white/10"
-                                 )}
-                               >
-                                 <Star className={cn("w-5 h-5", newRating >= star && "fill-accent")} />
-                               </button>
-                             ))}
-                          </div>
-                       </div>
+                    {user ? (
+                      <form onSubmit={handleSubmitReview} className="space-y-8">
+                         <div className="space-y-4">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-white/20 italic ml-4">Quality Rating</p>
+                            <div className="flex space-x-4">
+                               {[1, 2, 3, 4, 5].map((star) => (
+                                 <button
+                                   key={star}
+                                   type="button"
+                                   onClick={() => setNewRating(star)}
+                                   className={cn(
+                                     "w-12 h-12 rounded-2xl flex items-center justify-center transition-all border",
+                                     newRating >= star ? "border-accent bg-accent/10 text-accent shadow-[0_0_20px_rgba(242,125,38,0.2)]" : "border-white/5 text-white/10"
+                                   )}
+                                 >
+                                   <Star className={cn("w-5 h-5", newRating >= star && "fill-accent")} />
+                                 </button>
+                               ))}
+                            </div>
+                         </div>
 
-                       <div className="space-y-4">
-                          <p className="text-[9px] font-black uppercase tracking-widest text-white/20 italic ml-4">Detailed Sentiment</p>
-                          <textarea
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Describe the threads..."
-                            className="w-full bg-white/5 border border-white/10 rounded-3xl p-6 text-[11px] font-medium uppercase tracking-widest text-white outline-none focus:border-accent transition-all min-h-[120px] resize-none"
-                          />
-                       </div>
+                         <div className="space-y-4">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-white/20 italic ml-4">Detailed Sentiment</p>
+                            <textarea
+                              value={newComment}
+                              onChange={(e) => setNewComment(e.target.value)}
+                              placeholder="Describe the threads..."
+                              className="w-full bg-white/5 border border-white/10 rounded-3xl p-6 text-[11px] font-medium uppercase tracking-widest text-white outline-none focus:border-accent transition-all min-h-[120px] resize-none"
+                            />
+                         </div>
 
-                       <button
-                         type="submit"
-                         disabled={isSubmittingReview || !newComment.trim()}
-                         className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-widest text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
-                       >
-                          {isSubmittingReview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                          <span>Inject Review</span>
-                       </button>
-                    </form>
+                         <button
+                           type="submit"
+                           disabled={isSubmittingReview || !newComment.trim()}
+                           className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-widest text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
+                         >
+                            {isSubmittingReview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                            <span>Inject Review</span>
+                         </button>
+                      </form>
+                    ) : (
+                      <div className="pt-4">
+                        <div className="p-8 rounded-[2.5rem] border border-white/5 bg-white/[0.02] text-center space-y-6">
+                           <div className="flex justify-center">
+                              <div className="bg-white/5 p-4 rounded-2xl">
+                                 <MessageSquare className="w-8 h-8 text-white/20" />
+                              </div>
+                           </div>
+                           <div className="space-y-2">
+                              <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed">
+                                 Identity Verification Required to broadcast your sentiment.
+                              </p>
+                           </div>
+                           <Link 
+                             to="/auth" 
+                             className="inline-block w-full bg-white text-black py-5 rounded-full font-black text-[10px] uppercase tracking-widest hover:bg-accent transition-all shadow-xl active:scale-95"
+                           >
+                             Verify Identity
+                           </Link>
+                        </div>
+                      </div>
+                    )}
                  </div>
               </div>
 
@@ -1133,7 +1293,7 @@ export function ProductPage() {
                             <div className="flex justify-between items-start">
                                <div className="flex items-center space-x-4">
                                   <div className="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center font-black text-[12px] text-accent">
-                                     {review.userName.charAt(0)}
+                                     {review.userName?.charAt(0) || 'K'}
                                   </div>
                                   <div>
                                      <p className="text-[10px] font-black uppercase tracking-widest text-white leading-none mb-1">{review.userName}</p>
@@ -1236,6 +1396,74 @@ export function ProductPage() {
                   </p>
                 </div>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Pricing Management Modal */}
+      <AnimatePresence>
+        {isPricingModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6"
+            onClick={() => setIsPricingModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="glass p-10 rounded-[3rem] w-full max-w-lg border border-white/10 relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+               <button 
+                 onClick={() => setIsPricingModalOpen(false)}
+                 className="absolute top-8 right-8 text-white/30 hover:text-white transition-colors"
+               >
+                 <X className="w-5 h-5" />
+               </button>
+
+               <div className="mb-10">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <ShieldCheck className="w-5 h-5 text-accent" />
+                    <h3 className="text-3xl font-display font-black uppercase italic tracking-tighter text-white">Economic <br/> Sovereignty</h3>
+                  </div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Update Asset Valuation per GSM Weight</p>
+               </div>
+
+               <div className="space-y-6 mb-10">
+                  {(product.gsmOptions || ['230', '260', '320']).map((gsm: string) => (
+                    <div key={gsm} className="bg-white/5 border border-white/5 rounded-2xl p-6 group hover:border-accent transition-all">
+                       <div className="flex items-center justify-between mb-4">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-white/40">{gsm} GSM Weight</span>
+                          <span className="text-accent font-black text-xs">{formatGHC(product.gsmPrices?.[gsm] || product.basePrice || 150)}</span>
+                       </div>
+                       <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-white/10 text-xs">₵</span>
+                          <input 
+                            type="number"
+                            defaultValue={product.gsmPrices?.[gsm] || product.basePrice || 150}
+                            onChange={(e) => {
+                               const val = Number(e.target.value);
+                               const newPrices = { ...(product.gsmPrices || {}), [gsm]: val };
+                               setProduct({ ...product, gsmPrices: newPrices });
+                            }}
+                            className="w-full bg-black/40 border border-transparent rounded-xl p-4 pl-8 text-xs font-black text-white outline-none focus:bg-black/60 focus:border-accent transition-all"
+                          />
+                       </div>
+                    </div>
+                  ))}
+               </div>
+
+               <button
+                 onClick={() => handleUpdateGsmPrices(product.gsmPrices)}
+                 className="w-full bg-accent text-black py-6 rounded-full font-black uppercase tracking-widest text-[11px] hover:bg-white transition-all flex items-center justify-center space-x-3"
+               >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Commit Economic Changes</span>
+               </button>
             </motion.div>
           </motion.div>
         )}

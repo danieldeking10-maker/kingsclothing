@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Zap, Trash2, Edit3, ChevronRight, Sparkles } from 'lucide-react';
 import { formatGHC, cn } from '@/src/lib/utils';
-import { PRICING } from '@/src/constants';
+import { PRICING, GSM_OPTIONS } from '@/src/constants';
+import { GSM } from '@/src/types';
 import { generateProductTags } from '../services/geminiService';
 
 interface ProductCardProps {
@@ -14,16 +15,44 @@ interface ProductCardProps {
   isNew?: boolean;
 }
 
-const getPrice = (category: string, subType?: string): number => {
-  if (category === 'T-Shirts' && subType) {
-    return (PRICING['T-Shirts'] as any)[subType] || 120;
+const getProductPrice = (product: any, selectedGsm: GSM): number => {
+  // 1. Check for gsmPrices on the product itself (managed by ledger)
+  if (product.gsmPrices && product.gsmPrices[selectedGsm]) {
+    return product.gsmPrices[selectedGsm];
   }
-  return (PRICING as any)[category] || 150;
+
+  // 2. Fallback to global PRICING constants
+  const globalCategoryPricing = (PRICING as any)[product.category];
+  
+  if (globalCategoryPricing) {
+    if (typeof globalCategoryPricing === 'object') {
+      return globalCategoryPricing[selectedGsm] || globalCategoryPricing['260'] || globalCategoryPricing['standard'] || 150;
+    }
+    return globalCategoryPricing;
+  }
+
+  return 150; // Final safety fallback
 };
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDelete, onUpdatePrice, isNew }) => {
   const [tags, setTags] = React.useState<string[]>([]);
   const [loadingTags, setLoadingTags] = React.useState(false);
+  
+  const gsmOptions = React.useMemo(() => {
+    if (product.gsmOptions && product.gsmOptions.length > 0) {
+      return product.gsmOptions as GSM[];
+    }
+    if (product.category === 'T-Shirts') {
+      return ['230', '260', '320'] as GSM[];
+    }
+    return ['standard'] as GSM[];
+  }, [product.gsmOptions, product.category]);
+
+  const [selectedGsm, setSelectedGsm] = React.useState<GSM>(gsmOptions[0] || '260');
+
+  const currentPrice = React.useMemo(() => {
+    return getProductPrice(product, selectedGsm);
+  }, [product, selectedGsm]);
 
   React.useEffect(() => {
     const fetchTags = async () => {
@@ -45,7 +74,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
       animate={{ opacity: 1, y: 0 }}
       className="group relative"
     >
-      <Link to={`/product/${product.id}`} className="block space-y-6">
+      <Link to={`/product/${product.id}?gsm=${selectedGsm}`} className="block space-y-6">
         <div className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#1A1A1B] group-hover:shadow-[0_0_50px_rgba(242,125,38,0.1)] transition-all duration-700">
           <img 
             src={product.mockupImage} 
@@ -122,30 +151,51 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
                EST. ACCRA • 2026
             </p>
           </div>
-          <div className="flex flex-col items-end">
-            <div className="flex items-center gap-2">
-               <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
-                 {formatGHC(product.basePrice || getPrice(product.category, product.subType))}
-               </p>
-               {isAdmin && onUpdatePrice && (
-                  <button 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const currentPrice = product.basePrice || getPrice(product.category, product.subType);
-                      const price = prompt('Enter new base price (GHS):', currentPrice.toString());
-                      if (price && !isNaN(Number(price))) {
-                        onUpdatePrice(product.id, Number(price), e);
-                      }
-                    }}
-                    className="p-1 hover:text-white text-white/20 transition-all scale-0 group-hover:scale-100"
-                    title="Edit Price"
-                  >
-                    <Edit3 className="w-3 h-3" />
-                  </button>
-               )}
+            <div className="flex flex-col items-end">
+              {gsmOptions.length > 1 && (
+                <div className="flex gap-1 mb-2 bg-white/5 p-1 rounded-full border border-white/5">
+                  {gsmOptions.map(gsm => (
+                    <button
+                      key={gsm}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setSelectedGsm(gsm);
+                      }}
+                      className={cn(
+                        "px-2 py-0.5 rounded-full text-[7px] font-black uppercase tracking-tighter transition-all",
+                        selectedGsm === gsm 
+                          ? "bg-accent text-black shadow-lg" 
+                          : "text-white/40 hover:text-white hover:bg-white/5"
+                      )}
+                    >
+                      {gsm}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                 <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
+                   {formatGHC(currentPrice)}
+                 </p>
+                 {isAdmin && onUpdatePrice && (
+                    <button 
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const price = prompt('Enter new base price (GHS):', currentPrice.toString());
+                        if (price && !isNaN(Number(price))) {
+                          onUpdatePrice(product.id, Number(price), e);
+                        }
+                      }}
+                      className="p-1 hover:text-white text-white/20 transition-all scale-0 group-hover:scale-100"
+                      title="Edit Price"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                    </button>
+                 )}
+              </div>
             </div>
-          </div>
         </div>
       </Link>
     </motion.div>

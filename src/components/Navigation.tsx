@@ -10,8 +10,11 @@ import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
 import { MOMO_NUMBER } from '@/src/constants';
 
+import { CartDrawer } from './CartDrawer';
+
 export function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const { user } = useAuth();
   const { totalItems } = useCart();
@@ -92,7 +95,10 @@ export function Header() {
               )}
             </div>
 
-            <button className="relative p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5">
+            <button 
+              onClick={() => setIsCartOpen(true)}
+              className="relative p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5"
+            >
               <ShoppingCart className="w-4 h-4" />
               {totalItems > 0 && (
                 <span className="absolute -top-1 -right-1 bg-accent text-black text-[9px] font-black px-1.5 py-0.5 rounded-full animate-in zoom-in duration-300">
@@ -104,7 +110,10 @@ export function Header() {
 
           {/* Mobile Right Icons */}
           <div className="flex md:hidden items-center space-x-4">
-            <button className="p-2 relative">
+            <button 
+              onClick={() => setIsCartOpen(true)}
+              className="p-2 relative"
+            >
               <ShoppingCart className="w-5 h-5" />
               {totalItems > 0 && (
                 <span className="absolute top-0 right-0 bg-accent text-black text-[8px] font-black px-1 py-0.5 rounded-full">
@@ -168,6 +177,8 @@ export function Header() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
     </header>
   );
 }

@@ -22,18 +22,20 @@ import {
   Users,
   Sparkles,
   ShieldCheck,
-  Grid3X3
+  Grid3X3,
+  Trash2
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { GSM } from '../types';
 import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
-import { FABRIC_COLORS } from '../constants';
+import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -60,11 +62,16 @@ export function AgentPortal() {
     category: 'T-Shirts',
     isPrivate: true,
     allowedColors: FABRIC_COLORS.map(c => c.name),
+    gsmOptions: ['260'] as GSM[],
+    gsmPrices: { '260': 150 } as Record<string, number>,
     colorImages: {} as Record<string, string>,
-    colorStudioImages: {} as Record<string, string>
+    colorStudioImages: {} as Record<string, string>,
+    colorBlueprints: {} as Record<string, string>
   });
+  const [activeColorTab, setActiveColorTab] = useState(FABRIC_COLORS[0].name);
   const [ownerPreview, setOwnerPreview] = useState<string | null>(null);
   const [ownerStudioPreview, setOwnerStudioPreview] = useState<string | null>(null);
+  const [ownerBlueprintPreview, setOwnerBlueprintPreview] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'scanning' | 'pending' | 'success' | 'rejected'>('idle');
   const [scanResults, setScanResults] = useState<string | null>(null);
   const [myDesigns, setMyDesigns] = useState<any[]>([]);
@@ -78,11 +85,37 @@ export function AgentPortal() {
   const [allDesigns, setAllDesigns] = useState<any[]>([]);
   const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [genPrompt, setGenPrompt] = useState('');
   const [generatedPreview, setGeneratedPreview] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ownerFileInputRef = useRef<HTMLInputElement>(null);
   const ownerStudioInputRef = useRef<HTMLInputElement>(null);
+  const ownerBlueprintInputRef = useRef<HTMLInputElement>(null);
+  const colorMockupInputRef = useRef<HTMLInputElement>(null);
+  const colorStudioInputRef = useRef<HTMLInputElement>(null);
+  const colorBlueprintInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyReferral = () => {
+    if (!user) return;
+    const referralLink = `${window.location.origin}/shop?ref=${user.uid}`;
+    navigator.clipboard.writeText(referralLink);
+    setCopiedLink(true);
+    toast.success('Referral Authority Link Copied', {
+      icon: '🔗',
+      style: {
+        background: '#0a0a0a',
+        color: '#fff',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '1rem',
+        fontSize: '10px',
+        fontWeight: '900',
+        textTransform: 'uppercase',
+        letterSpacing: '0.1em'
+      }
+    });
+    setTimeout(() => setCopiedLink(false), 2000);
+  };
 
   const handleGenerateDesign = async () => {
     if (!genPrompt.trim() || !user) return;
@@ -158,6 +191,7 @@ export function AgentPortal() {
         agentName: user.displayName,
         mockupImage: await compressImage(generatedPreview),
         allowedColors: FABRIC_COLORS.map(c => c.name),
+        gsmOptions: ['260'],
         createdAt: serverTimestamp()
       });
       toast.success('Design Injected into Ledger!');
@@ -317,16 +351,45 @@ export function AgentPortal() {
   ];
 
   const chartData = useMemo(() => {
-    const total = agentProfile?.stats?.commissionEarned || 0;
-    // High-impact trajectory simulation
-    return [
-      { name: 'Phase I', value: total * 0.15 },
-      { name: 'Phase II', value: total * 0.32 },
-      { name: 'Phase III', value: total * 0.48 },
-      { name: 'Phase IV', value: total * 0.72 },
-      { name: 'Current', value: total },
-    ];
-  }, [agentProfile?.stats?.commissionEarned]);
+    // Standardize timeline for last 6 months
+    const data = [];
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthLabel = date.toLocaleString('default', { month: 'short' }).toUpperCase();
+      data.push({
+        name: monthLabel,
+        sales: 0,
+        commission: 0,
+        designs: 0,
+        month: date.getMonth(),
+        year: date.getFullYear()
+      });
+    }
+
+    // Map referrals (orders) into timeline
+    referrals.forEach(order => {
+      if (!order.createdAt) return;
+      const date = order.createdAt.toDate ? order.createdAt.toDate() : new Date(order.createdAt);
+      const entry = data.find(d => d.month === date.getMonth() && d.year === date.getFullYear());
+      if (entry) {
+        entry.sales += (order.totalAmount || 0);
+        entry.commission += (order.depositAmount || 0) * 0.1;
+      }
+    });
+
+    // Map designs into timeline
+    myDesigns.forEach(design => {
+      if (!design.createdAt || design.status !== 'approved') return;
+      const date = design.createdAt.toDate ? design.createdAt.toDate() : new Date(design.createdAt);
+      const entry = data.find(d => d.month === date.getMonth() && d.year === date.getFullYear());
+      if (entry) {
+        entry.designs += 1;
+      }
+    });
+
+    return data;
+  }, [referrals, myDesigns]);
 
   const handleCopyLink = () => {
     const link = `${window.location.origin}/shop?ref=${user?.uid}`;
@@ -334,7 +397,7 @@ export function AgentPortal() {
     toast.success('Referral link copied to clipboard!');
   };
 
-  const handleOwnerFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: 'mockup' | 'studio' = 'mockup') => {
+  const handleOwnerFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: 'mockup' | 'studio' | 'blueprint' | 'colorMockup' | 'colorStudio' | 'colorBlueprint' = 'mockup') => {
     const file = e.target.files?.[0];
     if (!file || !user || !isBrandOwner) return;
 
@@ -345,10 +408,28 @@ export function AgentPortal() {
       });
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
+      
       if (type === 'mockup') {
         setOwnerPreview(base64Data);
-      } else {
+      } else if (type === 'studio') {
         setOwnerStudioPreview(base64Data);
+      } else if (type === 'blueprint') {
+        setOwnerBlueprintPreview(base64Data);
+      } else if (type === 'colorMockup') {
+        setOwnerForm(prev => ({
+          ...prev,
+          colorImages: { ...prev.colorImages, [activeColorTab]: base64Data }
+        }));
+      } else if (type === 'colorStudio') {
+        setOwnerForm(prev => ({
+          ...prev,
+          colorStudioImages: { ...prev.colorStudioImages, [activeColorTab]: base64Data }
+        }));
+      } else if (type === 'colorBlueprint') {
+        setOwnerForm(prev => ({
+          ...prev,
+          colorBlueprints: { ...prev.colorBlueprints, [activeColorTab]: base64Data }
+        }));
       }
     } catch (error: any) {
       toast.error('Preview failed: ' + error.message);
@@ -369,6 +450,7 @@ export function AgentPortal() {
       const compressedMockup = await compressImage(ownerPreview);
       
       let finalStudioImage = ownerStudioPreview;
+      let finalBlueprintImage = ownerBlueprintPreview;
       
       if (!finalStudioImage) {
         setUploadProgress(25);
@@ -408,7 +490,27 @@ export function AgentPortal() {
 
       setUploadProgress(65);
       const compressedStudio = finalStudioImage ? await compressImage(finalStudioImage) : null;
-      setUploadProgress(85);
+      const compressedBlueprint = finalBlueprintImage ? await compressImage(finalBlueprintImage) : null;
+      setUploadProgress(75);
+
+      // Compress color-specific images
+      const colorImages: Record<string, string> = {};
+      const colorStudioImages: Record<string, string> = {};
+      const colorBlueprints: Record<string, string> = {};
+
+      for (const color of ownerForm.allowedColors) {
+        if (ownerForm.colorImages[color]) {
+          colorImages[color] = await compressImage(ownerForm.colorImages[color]);
+        }
+        if (ownerForm.colorStudioImages[color]) {
+          colorStudioImages[color] = await compressImage(ownerForm.colorStudioImages[color]);
+        }
+        if (ownerForm.colorBlueprints[color]) {
+          colorBlueprints[color] = await compressImage(ownerForm.colorBlueprints[color]);
+        }
+      }
+
+      setUploadProgress(90);
 
       await addDoc(collection(db, 'products'), {
         name: ownerForm.name,
@@ -420,8 +522,14 @@ export function AgentPortal() {
         agentName: 'Kings Brand Owner',
         mockupImage: compressedMockup,
         studioImage: compressedStudio,
+        blueprintImage: compressedBlueprint,
         isPrivate: ownerForm.isPrivate,
         allowedColors: ownerForm.allowedColors,
+        gsmOptions: ownerForm.gsmOptions,
+        gsmPrices: ownerForm.gsmPrices,
+        colorImages,
+        colorStudioImages,
+        colorBlueprints,
         createdAt: serverTimestamp()
       });
       setUploadProgress(100);
@@ -429,6 +537,7 @@ export function AgentPortal() {
       setTimeout(() => {
         setOwnerPreview(null);
         setOwnerStudioPreview(null);
+        setOwnerBlueprintPreview(null);
         setOwnerForm({
           name: '',
           description: '',
@@ -479,9 +588,20 @@ export function AgentPortal() {
         status: newStatus,
         updatedAt: serverTimestamp()
       });
-      toast.success(`Design ${newStatus === 'approved' ? 'Sanctified' : 'Purged'}`);
+      toast.success(`Design ${newStatus === 'approved' ? 'Sanctified' : 'Rejected'}`);
     } catch (error: any) {
       toast.error('Authority Override Failed: ' + error.message);
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (!window.confirm('Are you sure you want to purge this design from the ledger? This action is irreversible.')) return;
+    
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+      toast.success('Design purged from catalog');
+    } catch (error: any) {
+      toast.error('Purge failed: ' + error.message);
     }
   };
 
@@ -562,6 +682,7 @@ export function AgentPortal() {
           agentName: user.displayName,
           mockupImage: await compressImage(`data:${file.type};base64,${base64Data}`),
           allowedColors: FABRIC_COLORS.map(c => c.name),
+          gsmOptions: ['260'],
           createdAt: serverTimestamp()
         });
         toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
@@ -611,9 +732,23 @@ export function AgentPortal() {
                <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center font-black text-black">
                   {user.displayName?.charAt(0) || 'K'}
                </div>
-               <div>
+               <div className="flex flex-col">
                   <p className="text-[10px] font-black uppercase tracking-widest text-white leading-none mb-1">{user.displayName}</p>
-                  <p className="text-[9px] font-medium text-white/40 uppercase tracking-tighter">Status: Active Authority</p>
+                  <div className="flex items-center gap-3">
+                     <p className="text-[9px] font-medium text-white/40 uppercase tracking-tighter">Status: Active Authority</p>
+                     <button 
+                       onClick={handleCopyReferral}
+                       className={cn(
+                         "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all text-[7px] font-black uppercase tracking-widest",
+                         copiedLink 
+                           ? "bg-accent/20 border-accent text-accent" 
+                           : "bg-white/10 border-white/10 text-white/60 hover:bg-white/20 hover:text-white"
+                       )}
+                     >
+                        <Copy className="w-2.5 h-2.5" />
+                        <span>{copiedLink ? 'Authority Copied' : 'Copy Referral'}</span>
+                     </button>
+                  </div>
                </div>
             </div>
           </div>
@@ -648,7 +783,7 @@ export function AgentPortal() {
                     <Star className="w-3 h-3 fill-accent" />
                     <span>Intelligence Active</span>
                  </div>
-                 <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white">Commission Intelligence</h2>
+                 <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white">Performance Intelligence</h2>
                  <p className="text-white/40 text-sm leading-relaxed font-light uppercase tracking-tight">
                     Visualizing the accumulation of your sovereign wealth. This trajectory tracks verified payouts and pending royalties.
                  </p>
@@ -660,7 +795,7 @@ export function AgentPortal() {
               
               <div className="xl:w-3/4 h-[300px] w-full">
                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 20, bottom: 20 }}>
                        <defs>
                           <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                              <stop offset="5%" stopColor="#F27D26" stopOpacity={0.3}/>
@@ -774,7 +909,7 @@ export function AgentPortal() {
                                       "group relative flex items-center space-x-3 px-4 py-3 rounded-xl border-2 transition-all",
                                       ownerForm.allowedColors?.includes(color.name) 
                                        ? "border-accent bg-accent/10 shadow-[0_0_15px_rgba(242,125,38,0.1)]" 
-                                       : "border-black/5 hover:border-black/20"
+                                       : "border-black/5 hover:border-black/10"
                                    )}
                                 >
                                    <div className="w-4 h-4 rounded-full shadow-inner border border-black/10" style={{ backgroundColor: color.hex }} />
@@ -790,6 +925,193 @@ export function AgentPortal() {
                                 </button>
                              ))}
                           </div>
+                       </div>
+
+                       {/* Color Specific Assets */}
+                       <div className="space-y-6 p-6 bg-black/5 rounded-[2.5rem] border-4 border-black/5">
+                          <div className="flex items-center justify-between px-2">
+                             <div className="flex items-center space-x-3">
+                                <Palette className="w-4 h-4 text-accent" />
+                                <label className="text-[10px] font-black uppercase tracking-widest text-black/40 italic">Color-Specific Assets</label>
+                             </div>
+                             <span className="text-[8px] font-black text-accent uppercase tracking-widest bg-accent/10 px-3 py-1 rounded-full italic">High Fidelity Protocol</span>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 p-2 bg-white/5 rounded-2xl overflow-x-auto">
+                             {ownerForm.allowedColors.map(colorName => (
+                                <button
+                                   key={colorName}
+                                   type="button"
+                                   onClick={() => setActiveColorTab(colorName)}
+                                   className={cn(
+                                      "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+                                      activeColorTab === colorName ? "bg-accent text-black shadow-lg" : "text-black/40 hover:text-black"
+                                   )}
+                                >
+                                   {colorName}
+                                </button>
+                             ))}
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                             <div className="space-y-4">
+                                <p className="text-[9px] font-black uppercase tracking-widest text-black/30 px-2">Mockup (Blueprint)</p>
+                                <div 
+                                   onClick={() => colorMockupInputRef.current?.click()}
+                                   className="aspect-square bg-white border-2 border-dashed border-black/10 rounded-2xl overflow-hidden cursor-pointer hover:border-accent transition-all relative group"
+                                >
+                                   {ownerForm.colorImages[activeColorTab] ? (
+                                      <img src={ownerForm.colorImages[activeColorTab]} className="w-full h-full object-cover" />
+                                   ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center text-black/20">
+                                         <Upload className="w-6 h-6 mb-2" />
+                                         <span className="text-[8px] font-black uppercase tracking-widest text-center px-4">Upload Blueprint</span>
+                                      </div>
+                                   )}
+                                </div>
+                             </div>
+
+                             <div className="space-y-4">
+                                <p className="text-[9px] font-black uppercase tracking-widest text-black/30 px-2">Studio Shoot</p>
+                                <div 
+                                   onClick={() => colorStudioInputRef.current?.click()}
+                                   className="aspect-square bg-white border-2 border-dashed border-black/10 rounded-2xl overflow-hidden cursor-pointer hover:border-accent transition-all relative group"
+                                >
+                                   {ownerForm.colorStudioImages[activeColorTab] ? (
+                                      <img src={ownerForm.colorStudioImages[activeColorTab]} className="w-full h-full object-cover" />
+                                   ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center text-black/20">
+                                         <Sparkles className="w-6 h-6 mb-2" />
+                                         <span className="text-[8px] font-black uppercase tracking-widest text-center px-4">Upload Studio</span>
+                                      </div>
+                                   )}
+                                </div>
+                             </div>
+
+                             <div className="space-y-4">
+                                <p className="text-[9px] font-black uppercase tracking-widest text-black/30 px-2">Technical Blueprint</p>
+                                <div 
+                                   onClick={() => colorBlueprintInputRef.current?.click()}
+                                   className="aspect-square bg-white border-2 border-dashed border-black/10 rounded-2xl overflow-hidden cursor-pointer hover:border-accent transition-all relative group"
+                                >
+                                   {ownerForm.colorBlueprints[activeColorTab] ? (
+                                      <img src={ownerForm.colorBlueprints[activeColorTab]} className="w-full h-full object-cover" />
+                                   ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center text-black/20">
+                                         <ImageIcon className="w-6 h-6 mb-2" />
+                                         <span className="text-[8px] font-black uppercase tracking-widest text-center px-4">Upload Tech</span>
+                                      </div>
+                                   )}
+                                </div>
+                             </div>
+                          </div>
+
+                          <input type="file" hidden ref={colorMockupInputRef} onChange={(e) => handleOwnerFileSelect(e, 'colorMockup')} accept="image/*" />
+                          <input type="file" hidden ref={colorStudioInputRef} onChange={(e) => handleOwnerFileSelect(e, 'colorStudio')} accept="image/*" />
+                          <input type="file" hidden ref={colorBlueprintInputRef} onChange={(e) => handleOwnerFileSelect(e, 'colorBlueprint')} accept="image/*" />
+                       </div>
+
+                       <div className="space-y-6 p-6 bg-black/5 rounded-[2.5rem] border-4 border-black/5">
+                          <div className="flex items-center justify-between px-2">
+                             <div className="flex items-center space-x-3">
+                                <ShieldCheck className="w-4 h-4 text-accent" />
+                                <label className="text-[10px] font-black uppercase tracking-widest text-black/40 italic">Structural Weights (GSM)</label>
+                             </div>
+                             <span className="text-[8px] font-black text-accent uppercase tracking-widest bg-accent/10 px-3 py-1 rounded-full italic">High-Security Logic</span>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                             {GSM_OPTIONS.map(gsm => (
+                                <button
+                                   key={gsm}
+                                   type="button"
+                                   onClick={() => {
+                                      const currentOptions = ownerForm.gsmOptions || [];
+                                      const currentPrices = ownerForm.gsmPrices || {};
+                                      if (currentOptions.includes(gsm as GSM)) {
+                                         if (currentOptions.length > 1) {
+                                            const nextOptions = currentOptions.filter(o => o !== gsm);
+                                            const nextPrices = { ...currentPrices };
+                                            delete nextPrices[gsm];
+                                            setOwnerForm({ ...ownerForm, gsmOptions: nextOptions, gsmPrices: nextPrices });
+                                         } else {
+                                            toast.error('Identity requires at least one GSM weight');
+                                         }
+                                      } else {
+                                         setOwnerForm({ 
+                                            ...ownerForm, 
+                                            gsmOptions: [...currentOptions, gsm as GSM],
+                                            gsmPrices: { ...currentPrices, [gsm]: ownerForm.basePrice }
+                                         });
+                                      }
+                                   }}
+                                   className={cn(
+                                      "group relative flex flex-col items-center p-6 rounded-3xl border-2 transition-all duration-500 overflow-hidden",
+                                      ownerForm.gsmOptions?.includes(gsm as GSM)
+                                       ? "border-accent bg-accent/5 shadow-2xl scale-105" 
+                                       : "border-black/5 hover:border-black/10"
+                                   )}
+                                >
+                                   <div className={cn(
+                                      "mb-3 p-3 rounded-xl transition-all duration-500",
+                                      ownerForm.gsmOptions?.includes(gsm as GSM) ? "bg-accent text-black shadow-lg" : "bg-black/10 text-black/20"
+                                   )}>
+                                      <Zap className="w-4 h-4" />
+                                   </div>
+                                   <span className={cn(
+                                      "text-xs font-black uppercase italic tracking-tighter mb-1",
+                                      ownerForm.gsmOptions?.includes(gsm as GSM) ? "text-black" : "text-black/40"
+                                   )}>{gsm} GSM</span>
+                                   {ownerForm.gsmOptions?.includes(gsm as GSM) && (
+                                      <div className="absolute top-2 right-2">
+                                         <CheckCircle2 className="w-3 h-3 text-accent" />
+                                      </div>
+                                   )}
+                                </button>
+                             ))}
+                          </div>
+
+                          {/* Dynamic GSM Pricing Console */}
+                          <AnimatePresence>
+                             {ownerForm.gsmOptions?.length > 1 && (
+                                <motion.div 
+                                   initial={{ opacity: 0, y: 10 }}
+                                   animate={{ opacity: 1, y: 0 }}
+                                   exit={{ opacity: 0, y: 10 }}
+                                   className="space-y-4 pt-4 border-t border-black/5"
+                                >
+                                   <div className="flex items-center space-x-2 px-2">
+                                      <CreditCard className="w-3 h-3 text-accent" />
+                                      <label className="text-[9px] font-black uppercase tracking-widest text-black/40 italic">Economic Authority per GSM</label>
+                                   </div>
+                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                      {ownerForm.gsmOptions.map(gsm => (
+                                         <div key={`price-${gsm}`} className="relative bg-white border-2 border-black/5 rounded-2xl p-4 shadow-sm group hover:border-accent transition-all">
+                                            <div className="flex items-center justify-between mb-2">
+                                               <span className="text-[8px] font-black uppercase tracking-widest text-black/30 italic">Weight: {gsm} GSM</span>
+                                               <span className="text-[10px] font-black text-accent">{formatGHC(ownerForm.gsmPrices[gsm] || 0)}</span>
+                                            </div>
+                                            <div className="relative">
+                                               <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-black/20 text-xs">₵</span>
+                                               <input 
+                                                  type="number"
+                                                  value={ownerForm.gsmPrices[gsm] || ''}
+                                                  onChange={(e) => {
+                                                     const val = Number(e.target.value);
+                                                     setOwnerForm({
+                                                        ...ownerForm,
+                                                        gsmPrices: { ...ownerForm.gsmPrices, [gsm]: val }
+                                                     });
+                                                  }}
+                                                  className="w-full bg-black/5 border border-transparent rounded-xl p-3 pl-8 text-xs font-black outline-none focus:bg-white focus:border-accent transition-all"
+                                               />
+                                            </div>
+                                         </div>
+                                      ))}
+                                   </div>
+                                </motion.div>
+                             )}
+                          </AnimatePresence>
                        </div>
 
                        <div className="space-y-3">
@@ -860,7 +1182,7 @@ export function AgentPortal() {
                     </div>
 
                     <div className="flex flex-col gap-4 pt-4">
-                       <div className="grid grid-cols-2 gap-4">
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <input type="file" hidden ref={ownerFileInputRef} onChange={(e) => handleOwnerFileSelect(e, 'mockup')} accept="image/*" />
                           <button
                             onClick={() => ownerFileInputRef.current?.click()}
@@ -877,6 +1199,15 @@ export function AgentPortal() {
                           >
                             <Sparkles className="w-4 h-4" />
                             <span>{ownerStudioPreview ? 'Change Studio' : 'Studio Image'}</span>
+                          </button>
+
+                          <input type="file" hidden ref={ownerBlueprintInputRef} onChange={(e) => handleOwnerFileSelect(e, 'blueprint')} accept="image/*" />
+                          <button
+                            onClick={() => ownerBlueprintInputRef.current?.click()}
+                            className="bg-black/5 border-2 border-black/10 text-black px-6 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-white hover:border-black transition-all flex items-center justify-center gap-3 active:scale-95"
+                          >
+                            <ImageIcon className="w-4 h-4" />
+                            <span>{ownerBlueprintPreview ? 'Change Tech' : 'Tech Blueprint'}</span>
                           </button>
                        </div>
 
@@ -935,6 +1266,18 @@ export function AgentPortal() {
                              </div>
                           )}
                           <div className="absolute top-4 left-4 px-2 py-1 bg-black/40 backdrop-blur-md text-white text-[7px] font-black uppercase tracking-widest rounded-lg">Studio Preview</div>
+                       </div>
+
+                       <div className="aspect-[16/9] bg-black/5 rounded-[2rem] border-4 border-dashed border-black/10 overflow-hidden relative group/blueprint">
+                          {ownerBlueprintPreview ? (
+                             <img src={ownerBlueprintPreview} alt="Tech" className="w-full h-full object-cover transition-transform duration-700 group-hover/blueprint:scale-110" />
+                          ) : (
+                             <div className="w-full h-full flex flex-col items-center justify-center text-black/10">
+                                <ImageIcon className="w-10 h-10 mb-2" strokeWidth={1} />
+                                <span className="text-[8px] font-bold uppercase tracking-tighter">Tech Blueprint Optional</span>
+                             </div>
+                          )}
+                          <div className="absolute top-4 left-4 px-2 py-1 bg-black/40 backdrop-blur-md text-white text-[7px] font-black uppercase tracking-widest rounded-lg">Tech Preview</div>
                        </div>
                     </div>
                   </div>
@@ -1037,6 +1380,12 @@ export function AgentPortal() {
                                          className="text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white"
                                       >
                                          Toggle Visibility
+                                      </button>
+                                      <button 
+                                         onClick={() => handleDeleteProduct(product.id)}
+                                         className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500"
+                                      >
+                                         Purge
                                       </button>
                                    </div>
                                 </td>
@@ -1156,7 +1505,7 @@ export function AgentPortal() {
                                    Sanctify
                                  </button>
                                  <button 
-                                   onClick={() => handleUpdateProductStatus(design.id, 'rejected')}
+                                   onClick={() => handleDeleteProduct(design.id)}
                                    className="py-4 bg-white/5 text-red-500 text-[9px] font-black uppercase tracking-widest rounded-xl border border-red-500/10 hover:bg-red-500 hover:text-white transition-all shadow-xl"
                                  >
                                    Purge
@@ -1167,6 +1516,55 @@ export function AgentPortal() {
                         })
                       )}
                     </AnimatePresence>
+                  </div>
+                </div>
+
+                {/* Approved Designs Management (Brand Owner Only) */}
+                <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 mb-20">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-4">
+                      <div className="flex items-center space-x-6">
+                        <div className="bg-green-500/20 p-5 rounded-3xl border border-green-500/20">
+                            <Palette className="w-10 h-10 text-green-500" />
+                        </div>
+                        <div>
+                            <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Approved Catalog</h2>
+                            <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Master Inventory Guard & Cleanup</p>
+                        </div>
+                      </div>
+                      <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Total Active</p>
+                        <p className="text-2xl font-mono font-black text-white">{allDesigns.filter(d => d.status === 'approved').length} Designs</p>
+                      </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                    {allDesigns.filter(d => d.status === 'approved').slice(0, 12).map((design) => (
+                      <motion.div 
+                        key={design.id}
+                        className="glass p-5 rounded-3xl border border-white/5 hover:border-accent/30 transition-all group relative"
+                      >
+                         <div className="aspect-square bg-black/40 rounded-2xl overflow-hidden mb-4 relative">
+                            <img src={design.mockupImage} alt="" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-grayscale duration-500" />
+                            <div className="absolute top-2 right-2">
+                               <button 
+                                 onClick={() => handleDeleteProduct(design.id)}
+                                 className="p-2 rounded-lg bg-red-500/10 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:text-white"
+                               >
+                                  <Trash2 className="w-4 h-4" />
+                               </button>
+                            </div>
+                         </div>
+                         <div>
+                            <p className="text-[10px] font-black uppercase text-white truncate">{design.name}</p>
+                            <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter italic">by {design.agentName || 'Master'}</p>
+                         </div>
+                      </motion.div>
+                    ))}
+                    {allDesigns.filter(d => d.status === 'approved').length > 12 && (
+                      <div className="col-span-full text-center py-4">
+                         <p className="text-[8px] font-black uppercase tracking-[0.3em] text-white/20 italic">Showing 12 of {allDesigns.filter(d => d.status === 'approved').length} items. Use the shop to view all.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1665,7 +2063,7 @@ export function AgentPortal() {
                     <motion.div 
                       key={design.id} 
                       whileHover={{ y: -5 }}
-                      className="glass p-5 rounded-3xl border border-white/5 hover:border-accent/30 transition-all flex items-center space-x-6 grayscale hover:grayscale-0"
+                      className="glass p-5 rounded-3xl border border-white/5 hover:border-accent/30 transition-all flex items-center space-x-6 grayscale hover:grayscale-0 group"
                     >
                        <div className="w-24 h-28 bg-[#1A1A1B] rounded-2xl overflow-hidden relative border border-white/5 group">
                           <img src={design.mockupImage} alt="Design" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" referrerPolicy="no-referrer" />
@@ -1690,9 +2088,17 @@ export function AgentPortal() {
                           </div>
                        </div>
                        <div className="flex-1 space-y-4">
-                          <div>
-                             <p className="text-xs font-black uppercase tracking-tighter truncate leading-none mb-1">{design.name}</p>
-                             <p className="text-[8px] font-black uppercase tracking-widest text-white/20">{design.category}</p>
+                          <div className="flex items-center justify-between">
+                             <div>
+                                <p className="text-xs font-black uppercase tracking-tighter truncate leading-none mb-1">{design.name}</p>
+                                <p className="text-[8px] font-black uppercase tracking-widest text-white/20">{design.category}</p>
+                             </div>
+                             <button 
+                               onClick={() => handleDeleteProduct(design.id)}
+                               className="p-2 rounded-lg bg-red-500/10 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:text-white"
+                             >
+                                <Trash2 className="w-4 h-4" />
+                             </button>
                           </div>
                           <div className={cn(
                             "inline-flex items-center space-x-2 px-3 py-1.5 rounded-full border transition-all",

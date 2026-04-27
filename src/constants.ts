@@ -10,6 +10,8 @@ export const CATEGORIES = [
   'Accessories'
 ];
 
+export const GSM_OPTIONS = ['230', '260', '320'];
+
 export const PRICING = {
   'Hoodies': 250,
   'Sweatshirts': 230,

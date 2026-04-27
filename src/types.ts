@@ -13,6 +13,11 @@ export interface Product {
   agentId?: string;
   isApproved: boolean;
   description: string;
+  colorImages?: Record<string, string>;
+  colorStudioImages?: Record<string, string>;
+  colorBlueprints?: Record<string, string>;
+  gsmOptions?: string[];
+  allowedColors?: string[];
 }
 
 export interface Agent {
