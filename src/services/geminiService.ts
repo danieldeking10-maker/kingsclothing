@@ -15,6 +15,7 @@ export async function generateProductTags(name: string, category: string, descri
       model: "gemini-3-flash-preview",
       contents: prompt,
       config: {
+        systemInstruction: "You are a premium streetwear brand consultant. You generate short, high-impact fashion tags that evoke luxury, urban culture, and artisanal quality.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -22,7 +23,8 @@ export async function generateProductTags(name: string, category: string, descri
           properties: {
             tags: {
               type: Type.ARRAY,
-              items: { type: Type.STRING }
+              items: { type: Type.STRING },
+              description: "3 highly curated fashion tags"
             }
           }
         }

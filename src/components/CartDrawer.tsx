@@ -110,7 +110,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                       className="flex items-start space-x-6 group"
                     >
                       <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
-                        <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" />
+                        <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
                       </div>
                       <div className="flex-1 space-y-2">
                         <div className="flex justify-between items-start">

@@ -128,21 +128,32 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
             </h3>
             
             {/* AI Tags Section */}
-            <div className="flex flex-wrap gap-2 pt-1 min-h-[20px]">
+            <div className="flex flex-wrap gap-1.5 pt-2 min-h-[24px]">
               {loadingTags ? (
                 <div className="flex gap-2">
-                  <div className="h-4 w-12 bg-white/5 animate-pulse rounded" />
-                  <div className="h-4 w-16 bg-white/5 animate-pulse rounded" />
+                  <motion.div 
+                    animate={{ opacity: [0.2, 0.5, 0.2] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                    className="h-3.5 w-12 bg-white/5 rounded-full" 
+                  />
+                  <motion.div 
+                    animate={{ opacity: [0.2, 0.5, 0.2] }}
+                    transition={{ duration: 1.5, repeat: Infinity, delay: 0.2 }}
+                    className="h-3.5 w-16 bg-white/5 rounded-full" 
+                  />
                 </div>
               ) : (
                 tags.map((tag, i) => (
-                  <span 
+                  <motion.span 
                     key={i} 
-                    className="text-[7px] font-black uppercase tracking-widest text-white/40 px-2 py-0.5 border border-white/5 rounded-full flex items-center gap-1 group-hover:border-accent/20 group-hover:text-white/60 transition-colors"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: i * 0.1 }}
+                    className="text-[7px] font-black uppercase tracking-[0.2em] text-white/30 px-2.5 py-1 border border-white/5 rounded-full flex items-center gap-1 group-hover:border-accent/30 group-hover:bg-accent/5 group-hover:text-accent transition-all duration-300"
                   >
-                    {i === 0 && <Sparkles className="w-2 h-2 text-accent/40" />}
+                    {i === 0 && <Sparkles className="w-2 h-2 text-accent" />}
                     {tag}
-                  </span>
+                  </motion.span>
                 ))
               )}
             </div>

@@ -26,7 +26,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [agentProfile, setAgentProfile] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const BRAND_OWNER_EMAIL = 'kingsclothingbrand7@gmail.com';
+  const BRAND_OWNER_EMAILS = ['kingsclothingbrand7@gmail.com', 'danieldeking10@gmail.com'];
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -50,8 +50,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     agentProfile,
     loading,
-    isAdmin: agentProfile?.role === 'admin' || user?.email === BRAND_OWNER_EMAIL,
-    isBrandOwner: user?.email === BRAND_OWNER_EMAIL,
+    isAdmin: agentProfile?.role === 'admin' || (user?.email && BRAND_OWNER_EMAILS.includes(user.email)),
+    isBrandOwner: user?.email && BRAND_OWNER_EMAILS.includes(user.email),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

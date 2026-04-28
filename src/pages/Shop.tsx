@@ -12,11 +12,22 @@ import toast from 'react-hot-toast';
 import { ProductCard } from '@/src/components/ProductCard';
 
 // Helper to get price from the nested pricing object
-const getPrice = (category: string, subType?: string): number => {
-  if (category === 'T-Shirts' && subType) {
-    return (PRICING['T-Shirts'] as any)[subType] || 120;
+const getPrice = (product: any): number => {
+  const category = product.category;
+  const gsm = (product.gsmOptions && product.gsmOptions[0]) || '260';
+  
+  if (product.gsmPrices && product.gsmPrices[gsm]) {
+    return product.gsmPrices[gsm];
   }
-  return (PRICING as any)[category] || 150;
+
+  const globalCategoryPricing = (PRICING as any)[category];
+  if (globalCategoryPricing) {
+    if (typeof globalCategoryPricing === 'object') {
+      return globalCategoryPricing[gsm] || globalCategoryPricing['260'] || 150;
+    }
+    return globalCategoryPricing;
+  }
+  return 150;
 };
 
 export function ShopPage() {
@@ -71,8 +82,8 @@ export function ShopPage() {
         const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
         return timeB - timeA;
       }
-      const priceA = getPrice(a.category, a.subType);
-      const priceB = getPrice(b.category, b.subType);
+      const priceA = getPrice(a);
+      const priceB = getPrice(b);
       if (sortBy === 'price-low') return priceA - priceB;
       if (sortBy === 'price-high') return priceB - priceA;
       return 0;
@@ -127,7 +138,7 @@ export function ShopPage() {
           <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-8 pb-12 border-b border-white/5">
             <div className="max-w-2xl">
               <span className="text-accent text-[10px] font-black uppercase tracking-editorial mb-4 block animate-pulse">The Catalog</span>
-              <h1 className="text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.85]">
+              <h1 className="text-5xl sm:text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.85]">
                 {search ? `Searching: ${search}` : 'Authority Blueprint'}
               </h1>
             </div>

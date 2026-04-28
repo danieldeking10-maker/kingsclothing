@@ -423,8 +423,8 @@ export function OrderConfirmationPage() {
                
                <div className="pt-8 border-t border-white/5 flex items-center justify-between">
                   <div className="flex -space-x-2">
-                     <img src="https://picsum.photos/seed/m1/40/40" className="w-8 h-8 rounded-full border-2 border-background object-cover" />
-                     <img src="https://picsum.photos/seed/m2/40/40" className="w-8 h-8 rounded-full border-2 border-background object-cover" />
+                     <img src="https://picsum.photos/seed/m1/40/40" className="w-8 h-8 rounded-full border-2 border-background object-cover" referrerPolicy="no-referrer" />
+                     <img src="https://picsum.photos/seed/m2/40/40" className="w-8 h-8 rounded-full border-2 border-background object-cover" referrerPolicy="no-referrer" />
                   </div>
                   <p className="text-[8px] font-black uppercase tracking-widest text-white/20 italic">50/50 Strategy Active</p>
                </div>
@@ -442,7 +442,7 @@ export function OrderConfirmationPage() {
                 {order.items.map((item: any, idx: number) => (
                   <div key={idx} className="flex items-center space-x-6">
                     <div className="w-20 h-24 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 grayscale">
-                       <img src="https://picsum.photos/seed/item/200/250" className="w-full h-full object-cover" />
+                       <img src="https://picsum.photos/seed/item/200/250" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                     <div className="flex-1">
                       <h4 className="text-sm font-black uppercase tracking-tighter text-white mb-2 italic">"{item.name}"</h4>

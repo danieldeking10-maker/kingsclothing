@@ -609,8 +609,8 @@ export function ProductPage() {
               </div>
 
               {/* View Mode Toggle - Architectural Style */}
-              <div className="absolute top-1/2 -translate-y-1/2 left-8 flex flex-col gap-3 py-4 z-20">
-                <div className="flex flex-col gap-2 p-1.5 glass rounded-2xl border border-white/10 shadow-2xl">
+              <div className="absolute lg:top-1/2 lg:-translate-y-1/2 top-4 left-4 lg:left-8 flex lg:flex-col flex-row gap-3 py-4 z-20">
+                <div className="flex lg:flex-col flex-row gap-2 p-1.5 glass rounded-2xl border border-white/10 shadow-2xl">
                   <button
                     onClick={() => setViewMode('mockup')}
                     className={cn(
@@ -727,6 +727,38 @@ export function ProductPage() {
                   <span className="text-[10px] font-black uppercase tracking-editorial text-white/60 leading-tight">Accra Region<br/>Verified Ship</span>
                </div>
             </div>
+
+            {/* Social Share Authority - Below Gallery */}
+            <div className="pt-8 border-t border-white/5">
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center space-x-3">
+                        <Share2 className="w-4 h-4 text-accent" />
+                        <span className="text-[12px] font-black uppercase tracking-[0.3em] text-white italic">Broadcast Authority</span>
+                    </div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Share Blueprint</p>
+                </div>
+                <div className="grid grid-cols-4 gap-4">
+                  <button
+                    onClick={copyToClipboard}
+                    className="flex flex-col items-center justify-center p-6 bg-white/5 border border-white/10 rounded-3xl hover:bg-accent hover:text-black transition-all group/share"
+                  >
+                    <LinkIcon className="w-5 h-5 mb-2 group-hover/share:scale-110 transition-transform" />
+                    <span className="text-[8px] font-black uppercase tracking-widest">Copy</span>
+                  </button>
+                  {sharePlatforms.map((platform) => (
+                    <a
+                      key={platform.name}
+                      href={platform.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-col items-center justify-center p-6 bg-white/5 border border-white/10 rounded-3xl hover:bg-accent hover:text-black transition-all group/share"
+                    >
+                      <platform.icon className="w-5 h-5 mb-2 group-hover/share:scale-110 transition-transform" />
+                      <span className="text-[8px] font-black uppercase tracking-widest">{platform.name}</span>
+                    </a>
+                  ))}
+                </div>
+            </div>
           </div>
 
           {/* Right: Info & Config (Span 5) */}
@@ -753,7 +785,7 @@ export function ProductPage() {
                   </div>
                 )}
               </div>
-              <h1 className="text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.8] mb-8 relative z-10">
+              <h1 className="text-5xl sm:text-6xl md:text-8xl font-display font-black tracking-tighter uppercase italic leading-[0.8] mb-8 relative z-10">
                 {product.name}
               </h1>
               <div className="absolute top-0 right-0 opacity-5 pointer-events-none -translate-y-1/2">
@@ -762,42 +794,6 @@ export function ProductPage() {
               <p className="text-white/40 text-lg leading-relaxed font-light font-sans max-w-md">
                 {product.description}
               </p>
-
-              {/* Social Sharing Section */}
-              <div className="mt-12 flex flex-col space-y-4">
-                <div className="flex items-center space-x-3">
-                  <Share2 className="w-3 h-3 text-accent" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">Broadcast Authority</span>
-                </div>
-                <div className="flex items-center space-x-4">
-                  {sharePlatforms.map((platform) => (
-                    <motion.a
-                      key={platform.name}
-                      href={platform.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      whileHover={{ scale: 1.1, y: -2 }}
-                      whileTap={{ scale: 0.95 }}
-                      className={cn(
-                        "w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 transition-all",
-                        platform.color
-                      )}
-                      title={`Share on ${platform.name}`}
-                    >
-                      <platform.icon className="w-5 h-5" />
-                    </motion.a>
-                  ))}
-                  <motion.button
-                    onClick={copyToClipboard}
-                    whileHover={{ scale: 1.1, y: -2 }}
-                    whileTap={{ scale: 0.95 }}
-                    className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-accent hover:border-accent/40 transition-all"
-                    title="Copy Link to Clipboard"
-                  >
-                    <LinkIcon className="w-5 h-5" />
-                  </motion.button>
-                </div>
-              </div>
 
               {/* AI Narrative Button (Simplified) */}
               <div className="mt-8">

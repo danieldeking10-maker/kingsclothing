@@ -13,6 +13,7 @@ service cloud.firestore {
     function isAdmin() { 
       return isSignedIn() && (
         request.auth.token.email == "kingsclothingbrand7@gmail.com" ||
+        request.auth.token.email == "danieldeking10@gmail.com" ||
         (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == "admin")
       );
     }
@@ -81,7 +82,11 @@ service cloud.firestore {
       allow update: if (isAdmin() || (isOwner(existing().agentId) && existing().status == "pending"))
         && isValidProduct(incoming())
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'mockupImage', 'studioImage', 'isPrivate', 'updatedAt', 'allowedColors', 'colorStudioImages', 'colorImages', 'name', 'description', 'basePrice'])) ||
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'mockupImage', 'studioImage', 'blueprintImage', 'isPrivate', 
+            'updatedAt', 'allowedColors', 'colorStudioImages', 'colorBlueprints', 
+            'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions'
+          ])) ||
           (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
         );
       allow delete: if isAdmin() || isOwner(existing().agentId);

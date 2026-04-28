@@ -42,9 +42,9 @@ export function HomePage() {
               className="space-y-4"
             >
               <span className="text-xs uppercase tracking-editorial text-accent font-black block">Premium Streetwear</span>
-              <h1 className="text-6xl md:text-8xl lg:text-9xl font-display leading-[0.85] font-light italic">
+              <h1 className="text-5xl sm:text-6xl md:text-8xl lg:text-9xl font-display leading-[0.85] font-light italic">
                 Armor for <br />
-                <span className="text-serif text-5xl md:text-7xl lg:text-8xl font-medium not-italic">the Ambitious.</span>
+                <span className="text-serif text-4xl sm:text-5xl md:text-7xl lg:text-8xl font-medium not-italic">the Ambitious.</span>
               </h1>
             </motion.div>
 

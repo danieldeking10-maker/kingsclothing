@@ -36,6 +36,8 @@ export function AuthPage() {
           email: user.email,
           role: 'agent',
           referredBy: referralId || null,
+          momoNumber: '',
+          referralCode: '',
           stats: {
             totalSales: 0,
             commissionEarned: 0,
