@@ -12,15 +12,14 @@ service cloud.firestore {
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
     function isAdmin() { 
       return isSignedIn() && (
-        request.auth.token.email == "kingsclothingbrand7@gmail.com" ||
-        request.auth.token.email == "danieldeking10@gmail.com" ||
+        request.auth.token.email in ["kingsclothingbrand7@gmail.com", "danieldeking10@gmail.com"] ||
         (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == "admin")
       );
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
     function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
-    function isVerifiedUser() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isVerifiedUser() { return isSignedIn() && (request.auth.token.email_verified == true || isAdmin()); }
 
     // --- Validation Blueprints ---
 
@@ -33,7 +32,7 @@ service cloud.firestore {
 
     function isValidProduct(data) {
       return data.name is string && data.name.size() > 0 && data.name.size() <= 100
-        && data.category is string && data.category.size() <= 50
+        && data.category is string && data.category.size() <= 100
         && data.basePrice is number && data.basePrice >= 0
         && data.status in ["pending", "approved", "rejected"]
         && (data.status == "pending" || isAdmin()) // Only admin can approve
@@ -65,7 +64,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && (
           (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'stats'])) ||
-          (isOwner(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['momoNumber', 'name', 'stats']))
+          (isOwner(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['momoNumber', 'name', 'stats', 'referralCode']))
         );
     }
 
@@ -101,7 +100,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && existing().status != "completed"
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'momoReference'])) ||
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'momoReference', 'paymentConfirmedAt', 'updatedAt'])) ||
           (isOwner(existing().customerId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'paymentConfirmedAt']))
         );
     }
