@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { ProductCard } from './ProductCard';
+import { ProductCardSkeleton } from './ui/Skeleton';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { RefreshCw, History } from 'lucide-react';
 
@@ -54,9 +55,10 @@ export function RecentlyViewed() {
         </div>
 
         {loading ? (
-          <div className="py-20 flex flex-col items-center space-y-4">
-            <RefreshCw className="w-8 h-8 animate-spin text-accent/20" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-white/20">Syncing History...</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <ProductCardSkeleton key={i} />
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">

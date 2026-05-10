@@ -9,19 +9,23 @@ import {
   ArrowLeft, 
   Zap, 
   ShieldCheck, 
+  MessageCircle,
   Phone,
   Copy,
   CreditCard,
+  Landmark,
   Share2,
   X,
   Search,
-  ChevronRight
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
 import { doc, onSnapshot, updateDoc, getDoc, increment } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { usePaystackPayment } from 'react-paystack';
 import { formatGHC, cn } from '@/src/lib/utils';
-import { MOMO_NUMBER } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
 
 const STEPS = [
@@ -41,7 +45,10 @@ export function OrderConfirmationPage() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isPinPromptOpen, setIsPinPromptOpen] = useState(false);
+  const [momoPin, setMomoPin] = useState('');
   const [trackId, setTrackId] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'momo' | 'bank'>('momo');
 
   const handleTrack = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,6 +69,92 @@ export function OrderConfirmationPage() {
     });
     return () => unsubscribe();
   }, [id]);
+
+  const [isAlerting, setIsAlerting] = useState(false);
+
+  const paystackConfig = {
+    reference: order?.id || '',
+    email: user?.email || order?.customerEmail || 'customer@example.com',
+    amount: (order?.depositAmount || 0) * 100, // Paystack amount is in kobo/pesewas
+    publicKey: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
+    currency: 'GHS',
+  };
+
+  const initializePayment = usePaystackPayment(paystackConfig);
+
+  const handlePaystackSuccess = async (reference: any) => {
+    console.log('Payment Success:', reference);
+    toast.success('Payment Received Successfully');
+    // Save payment method and confirm
+    if (id) {
+       await updateDoc(doc(db, 'orders', id), {
+         paymentMethod: 'momo',
+         paystackReference: reference.reference || reference.id || 'N/A'
+       });
+    }
+    await handleConfirmPayment();
+  };
+
+  const handlePaystackClose = () => {
+    toast.error('Payment Window Closed');
+  };
+
+  const handleTriggerAlert = () => {
+    if (!user?.email && !order?.customerEmail) {
+      toast.error('Customer email required for Paystack');
+      return;
+    }
+    
+    // Open the PIN simulation prompt first
+    setMomoPin('');
+    setIsPinPromptOpen(true);
+  };
+
+  const handlePinSubmit = () => {
+    if (momoPin.length < 4) {
+      toast.error('Invalid PIN Protocol');
+      return;
+    }
+
+    setIsPinPromptOpen(false);
+    
+    // Proceed to actual Paystack initialization
+    initializePayment({
+      onSuccess: handlePaystackSuccess,
+      onClose: handlePaystackClose,
+    });
+  };
+
+  const handleKeyClick = (num: string) => {
+    if (momoPin.length < 6) {
+      setMomoPin(prev => prev + num);
+    }
+  };
+
+  const handleKeyBackspace = () => {
+    setMomoPin(prev => prev.slice(0, -1));
+  };
+
+  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
+
+  const handleMarkAsPaid = async () => {
+    if (!id || order.status !== 'pending') return;
+    
+    setIsSubmittingTransfer(true);
+    try {
+      await updateDoc(doc(db, 'orders', id), {
+        paymentMethod: 'bank',
+        paymentSubmitted: true,
+        paymentSubmittedAt: new Date().toISOString()
+      });
+      toast.success('Transfer Record Logged. Awaiting Verification.');
+    } catch (error) {
+      console.error('Submission Error:', error);
+      toast.error('Failed to log transfer record.');
+    } finally {
+      setIsSubmittingTransfer(false);
+    }
+  };
 
   const handleConfirmPayment = async () => {
     if (!id || order.status !== 'pending') return;
@@ -112,11 +205,11 @@ export function OrderConfirmationPage() {
         status: 'cancelled',
         cancelledAt: new Date().toISOString()
       });
-      toast.success('Authority Revoked Successfully');
+      toast.success('Order Cancelled Successfully');
       setIsCancelDialogOpen(false);
     } catch (error) {
       console.error('Cancellation Error:', error);
-      toast.error('Failed to revoke authority.');
+      toast.error('Failed to cancel order.');
     } finally {
       setIsCancelling(false);
     }
@@ -337,71 +430,190 @@ export function OrderConfirmationPage() {
                     <CreditCard className="w-4 h-4" />
                     <span className="text-[9px] font-black uppercase tracking-editorial">{order.status === 'cancelled' ? 'Authority Status' : 'Action Required'}</span>
                   </div>
-                  {order.status !== 'cancelled' ? (
-                    <>
-                      <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-6">Authorize <br/> Deposit</h3>
-                      <p className="text-white/40 text-[10px] leading-relaxed font-bold uppercase tracking-tight mb-8">
-                        To trigger production, send <span className="text-accent font-black">{formatGHC(order.depositAmount)}</span> via Mobile Money. 
-                      </p>
-                    </>
-                  ) : (
-                    <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-6">Blueprint <br/> Terminated</h3>
-                  )}
-                  
-                  {order.status !== 'cancelled' && (
-                    <div className="space-y-4 mb-8">
-                       <div className="bg-white/5 p-5 rounded-2xl border border-white/5 flex items-center justify-between">
-                          <div>
-                             <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">MOMO Endpoint</p>
-                             <p className="text-lg font-mono font-black text-accent">{MOMO_NUMBER}</p>
-                          </div>
-                          <Phone className="w-5 h-5 text-accent/40" />
-                       </div>
-                       <div className="bg-white/5 p-5 rounded-2xl border border-white/5 flex items-center justify-between group/ref" onClick={handleCopyRef}>
-                          <div>
-                             <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Reference ID</p>
-                             <p className="text-lg font-mono font-black text-white">{order.id.slice(0, 8).toUpperCase()}</p>
-                          </div>
-                          <Copy className="w-5 h-5 text-white/10 group-hover/ref:text-white transition-colors" />
-                       </div>
-                    </div>
-                  )}
-
-                  {order.status === 'pending' && (
-                    <div className="space-y-4">
-                      {isBrandOwner ? (
-                        <div className="p-8 border-2 border-accent bg-accent/5 rounded-[2rem] space-y-6">
-                           <div className="flex items-center space-x-3">
-                              <ShieldCheck className="w-5 h-5 text-accent" />
-                              <span className="text-xs font-black uppercase tracking-editorial text-white">Owner Decision Center</span>
-                           </div>
-                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
-                              Verify that <span className="text-accent">{formatGHC(order.depositAmount)}</span> has been received into the Momo wallet before authorizing production.
-                           </p>
-                           <button 
-                            onClick={handleConfirmPayment}
-                            disabled={isConfirming}
-                            className="w-full py-6 bg-accent text-black font-black uppercase text-[11px] tracking-[0.2em] rounded-2xl hover:bg-white transition-all shadow-[0_0_30px_rgba(242,125,38,0.3)] flex items-center justify-center space-x-3"
-                          >
-                            {isConfirming ? (
-                              <RefreshCw className="w-5 h-5 animate-spin" />
-                            ) : (
-                              <Zap className="w-5 h-5" />
-                            )}
-                            <span>Confirm Receipt & Forge</span>
-                          </button>
-                        </div>
-                      ) : (
+                   <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-6">{order.status === 'cancelled' ? 'Blueprint Terminated' : 'Payment Alert Protocol'}</h3>
+                   
+                   {order.status === 'pending' && (
+                     <div className="flex p-1 bg-white/5 rounded-2xl mb-6">
                         <button 
-                          onClick={() => toast.success('Notification sent to Brand Owner')}
-                          className="w-full py-5 bg-white text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-accent transition-all flex items-center justify-center space-x-3 group/btn"
+                          onClick={() => setPaymentMethod('momo')}
+                          className={cn(
+                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
+                            paymentMethod === 'momo' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
+                          )}
                         >
-                          <CheckCircle2 className="w-4 h-4 group-hover/btn:scale-125 transition-transform" />
-                          <span>I have sent the deposit</span>
+                           <Zap className="w-3 h-3" />
+                           <span>Mobile Money</span>
                         </button>
-                      )}
-                    </div>
-                  )}
+                        <button 
+                          onClick={() => setPaymentMethod('bank')}
+                          className={cn(
+                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
+                            paymentMethod === 'bank' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
+                          )}
+                        >
+                           <Landmark className="w-3 h-3" />
+                           <span>Bank Transfer</span>
+                        </button>
+                     </div>
+                   )}
+
+                   {order.status !== 'cancelled' && paymentMethod === 'momo' && (
+                     <div className="space-y-4 mb-8">
+                        <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 flex flex-col items-center text-center space-y-4">
+                           <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center text-accent animate-pulse">
+                              <Zap className="w-6 h-6" />
+                           </div>
+                           <div>
+                              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent mb-2">Automated Alert Active</p>
+                              <p className="text-white/40 text-[9px] leading-relaxed font-bold uppercase tracking-tight">
+                                 A secure payment request has been signaled from <span className="text-white font-black">{PAYMENT_MOBILE_MONEY}</span> to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> deposit.
+                              </p>
+                           </div>
+                        </div>
+                        <div className="bg-white/5 p-6 rounded-2xl border border-white/5 space-y-4">
+                           <div className="flex items-center justify-between group/ref" onClick={handleCopyRef}>
+                              <div>
+                                 <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Security Hash (Reference)</p>
+                                 <p className="text-lg font-mono font-black text-white">{order.id.slice(0, 8).toUpperCase()}</p>
+                              </div>
+                              <Copy className="w-5 h-5 text-white/10 group-hover/ref:text-white transition-colors" />
+                           </div>
+                           <div className="h-px bg-white/5 w-full"></div>
+                           <a 
+                             href={`https://wa.me/${SUPPORT_INTERACTION_NUMBER}`}
+                             className="flex items-center justify-between group/support"
+                           >
+                              <div>
+                                 <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Order Support & Follow-up</p>
+                                 <p className="text-[11px] font-black text-accent uppercase">{SUPPORT_INTERACTION_NUMBER}</p>
+                              </div>
+                              <div className="bg-accent/10 p-2 rounded-lg group-hover/support:bg-accent group-hover/support:text-black transition-all">
+                                <MessageCircle className="w-4 h-4" />
+                              </div>
+                           </a>
+                        </div>
+                     </div>
+                   )}
+
+                   {order.status !== 'cancelled' && paymentMethod === 'bank' && (
+                     <div className="space-y-4 mb-8">
+                        <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 space-y-6">
+                           <div className="flex items-center space-x-3 text-accent transition-all">
+                              <Landmark className="w-5 h-5" />
+                              <span className="text-[10px] font-black uppercase tracking-editorial">Archive Account Ledger</span>
+                           </div>
+                           
+                           <div className="space-y-4">
+                              <div className="flex justify-between items-center group/bank" onClick={() => {
+                                 navigator.clipboard.writeText(BANK_DETAILS.accountNumber);
+                                 toast.success('Account Number Captured');
+                              }}>
+                                 <div>
+                                    <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Account Number</p>
+                                    <p className="text-xl font-mono font-black text-white tracking-widest">{BANK_DETAILS.accountNumber}</p>
+                                 </div>
+                                 <Copy className="w-3 h-3 text-white/10 group-hover/bank:text-accent" />
+                              </div>
+                              
+                              <div className="grid grid-cols-2 gap-4">
+                                 <div>
+                                    <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Ledger Name</p>
+                                    <p className="text-[10px] font-black text-white uppercase">{BANK_DETAILS.accountName}</p>
+                                 </div>
+                                 <div>
+                                    <p className="text-[8px] font-black uppercase tracking-widest text-white/20 mb-1 italic">Protocol Institution</p>
+                                    <p className="text-[10px] font-black text-white uppercase">{BANK_DETAILS.bankName}</p>
+                                 </div>
+                              </div>
+                           </div>
+
+                           <div className="pt-6 border-t border-white/5">
+                              <p className="text-[9px] font-bold text-white/40 leading-relaxed uppercase tracking-tight text-center">
+                                 Transfer <span className="text-accent font-black">{formatGHC(order.depositAmount)}</span> to the details above. Use Ref: <span className="text-white font-black">{order.id.slice(0, 8).toUpperCase()}</span>
+                              </p>
+                           </div>
+                        </div>
+
+                        <a 
+                          href={`https://wa.me/${SUPPORT_INTERACTION_NUMBER}?text=${encodeURIComponent(`Greetings Kings Clothing Archive. I have initiated a bank transfer of ${formatGHC(order.depositAmount)} for Order Ref: ${order.id.slice(0, 8).toUpperCase()}. Requesting verification.`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-5 bg-white/5 border border-white/10 hover:border-accent text-white font-black uppercase text-[10px] tracking-widest rounded-2xl transition-all flex items-center justify-center space-x-3"
+                        >
+                           <MessageCircle className="w-4 h-4 text-accent" />
+                           <span>Notify Archive of Transfer</span>
+                        </a>
+
+                        {order.status === 'pending' && !order.paymentSubmitted && (
+                          <button 
+                            onClick={handleMarkAsPaid}
+                            disabled={isSubmittingTransfer}
+                            className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white transition-all flex items-center justify-center space-x-3 shadow-lg shadow-accent/10"
+                          >
+                            {isSubmittingTransfer ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                            <span>Confirm Transfer Submission</span>
+                          </button>
+                        )}
+
+                        {order.paymentSubmitted && order.status === 'pending' && (
+                          <div className="p-5 bg-accent/10 border border-accent/20 rounded-2xl text-center">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Awaiting Registry Verification</p>
+                          </div>
+                        )}
+                     </div>
+                   )}
+
+                   {order.status === 'pending' && (
+                     <div className="space-y-4">
+                       {isBrandOwner ? (
+                         <div className={cn(
+                           "p-8 border-2 rounded-[2rem] space-y-6 transition-all",
+                           order.paymentSubmitted ? "border-accent bg-accent/5" : "border-white/10 bg-white/5"
+                         )}>
+                            <div className="flex items-center justify-between">
+                               <div className="flex items-center space-x-3">
+                                  <ShieldCheck className="w-5 h-5 text-accent" />
+                                  <span className="text-xs font-black uppercase tracking-editorial text-white">Authority Verification</span>
+                               </div>
+                               {order.paymentSubmitted && (
+                                  <div className="px-3 py-1 bg-accent text-black text-[8px] font-black uppercase tracking-widest rounded-full animate-pulse">
+                                     Flagged for Review
+                                  </div>
+                               )}
+                            </div>
+                            <div className="space-y-2">
+                               <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
+                                 Method: <span className="text-white">{order.paymentMethod === 'bank' ? 'Bank Transfer' : 'Mobile Money'}</span>
+                               </p>
+                               <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
+                                 Verify the {order.paymentMethod === 'bank' ? 'Account Ledger' : 'Paystack Ledger'} for <span className="text-accent">{formatGHC(order.depositAmount)}</span> before final authorization.
+                               </p>
+                            </div>
+                            <button 
+                             onClick={handleConfirmPayment}
+                             disabled={isConfirming}
+                             className="w-full py-6 bg-accent text-black font-black uppercase text-[11px] tracking-[0.2em] rounded-2xl hover:bg-white transition-all shadow-[0_0_30px_rgba(242,125,38,0.3)] flex items-center justify-center space-x-3"
+                           >
+                             {isConfirming ? (
+                               <RefreshCw className="w-5 h-5 animate-spin" />
+                             ) : (
+                               <ShieldCheck className="w-5 h-5" />
+                             )}
+                             <span>Authorize Production</span>
+                           </button>
+                         </div>
+                       ) : (
+                         <button 
+                           onClick={handleTriggerAlert}
+                           disabled={isAlerting}
+                           className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-white transition-all flex items-center justify-center space-x-3 group/btn shadow-xl shadow-accent/20"
+                         >
+                           {isAlerting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4 group-hover/btn:scale-125 transition-transform" />}
+                           <span>Pay Deposit with Paystack</span>
+                         </button>
+                       )}
+                     </div>
+                   )}
 
                   {['pending', 'processing'].includes(order.status) && (
                     <button 
@@ -409,7 +621,7 @@ export function OrderConfirmationPage() {
                       className="w-full mt-4 py-4 bg-red-500/10 text-red-500 border border-red-500/20 font-black uppercase text-[9px] tracking-[0.2em] rounded-2xl hover:bg-red-500 hover:text-black transition-all active:scale-95 flex items-center justify-center space-x-2"
                     >
                        <X className="w-3 h-3" />
-                       <span>Revoke Authorization</span>
+                       <span>Cancel Order</span>
                     </button>
                   )}
 
@@ -608,7 +820,7 @@ export function OrderConfirmationPage() {
                   <div className="w-16 h-16 rounded-3xl bg-red-500/10 flex items-center justify-center text-red-500 mb-6">
                      <ShieldCheck className="w-8 h-8" />
                   </div>
-                  <h3 className="text-3xl font-display font-black uppercase italic tracking-tighter text-white mb-2">Revoke <br/> Authority?</h3>
+                  <h3 className="text-3xl font-display font-black uppercase italic tracking-tighter text-white mb-2">Cancel <br/> Order?</h3>
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic leading-relaxed">
                      This action will terminate the procurement blueprint. This is an irreversible protocol.
                   </p>
@@ -621,39 +833,105 @@ export function OrderConfirmationPage() {
                     className="w-full py-5 bg-red-500 text-black font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white transition-all disabled:opacity-50 flex items-center justify-center space-x-3"
                   >
                      {isCancelling ? <RefreshCw className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
-                     <span>Terminate Order</span>
+                     <span>Cancel Order</span>
                   </button>
                   <button 
                     onClick={() => setIsCancelDialogOpen(false)}
                     className="w-full py-5 bg-white/5 text-white/60 font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white/10 transition-all"
                   >
-                     Abort Revocation
+                     Abort Cancellation
                   </button>
                </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
 
-function RefreshCw({ className }: { className?: string }) {
-  return (
-    <svg 
-      xmlns="http://www.w3.org/2000/svg" 
-      width="24" 
-      height="24" 
-      viewBox="0 0 24 24" 
-      fill="none" 
-      stroke="currentColor" 
-      strokeWidth="2" 
-      strokeLinecap="round" 
-      strokeLinejoin="round" 
-      className={className}
-    >
-      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
-      <path d="M21 3v5h-5"/>
-    </svg>
+      {/* MoMo PIN Simulation Modal */}
+      <AnimatePresence>
+        {isPinPromptOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-6"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="w-full max-w-sm flex flex-col items-center"
+            >
+              {/* MoMo Logo/Icon */}
+              <div className="w-20 h-20 bg-accent rounded-3xl mb-8 flex items-center justify-center text-black shadow-[0_0_50px_rgba(242,125,38,0.4)]">
+                <Zap className="w-10 h-10" />
+              </div>
+
+              <div className="text-center mb-12">
+                <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-2">SECURE GATEWAY</h3>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent">Authorize MoMo Protocol</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mt-4 leading-relaxed">
+                  Enter your secret PIN to authenticate the <br/> 
+                  <span className="text-white font-black">{formatGHC(order?.depositAmount || 0)}</span> transaction.
+                </p>
+              </div>
+
+              {/* PIN Display */}
+              <div className="flex justify-center gap-4 mb-16">
+                {[...Array(4)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    animate={momoPin.length > i ? { scale: [1, 1.2, 1], backgroundColor: '#F27D26' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0.05)' }}
+                    className={cn(
+                      "w-4 h-4 rounded-full border border-white/10 transition-all",
+                      momoPin.length > i ? "bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)]" : "bg-white/5"
+                    )}
+                  />
+                ))}
+              </div>
+
+              {/* Number Pad */}
+              <div className="grid grid-cols-3 gap-4 w-full mb-12">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <button
+                    key={num}
+                    onClick={() => handleKeyClick(num.toString())}
+                    className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
+                  >
+                    {num}
+                  </button>
+                ))}
+                <button 
+                  onClick={() => setIsPinPromptOpen(false)}
+                  className="h-16 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
+                >
+                  ABORT
+                </button>
+                <button
+                  onClick={() => handleKeyClick('0')}
+                  className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
+                >
+                  0
+                </button>
+                <button
+                  onClick={handleKeyBackspace}
+                  className="h-16 flex items-center justify-center text-white/40 hover:text-white rounded-2xl bg-white/5 border border-white/5 hover:border-white/20 transition-all"
+                >
+                  <RefreshCw className="w-5 h-5 rotate-[270deg]" />
+                </button>
+              </div>
+
+              <button
+                onClick={handlePinSubmit}
+                disabled={momoPin.length < 4}
+                className="w-full py-5 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-2xl hover:bg-white hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 shadow-2xl shadow-accent/20"
+              >
+                PROCEED TO LEDGER
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

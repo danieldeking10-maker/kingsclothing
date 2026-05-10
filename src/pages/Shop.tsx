@@ -10,6 +10,7 @@ import { useAuth } from '../lib/AuthContext';
 import toast from 'react-hot-toast';
 
 import { ProductCard } from '@/src/components/ProductCard';
+import { ProductCardSkeleton } from '@/src/components/ui/Skeleton';
 
 // Helper to get price from the nested pricing object
 const getPrice = (product: any): number => {
@@ -38,6 +39,7 @@ export function ShopPage() {
   
   const [products, setProducts] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 1000]);
   const [sortBy, setSortBy] = useState(sortParam);
   const [loading, setLoading] = useState(true);
 
@@ -71,11 +73,13 @@ export function ShopPage() {
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
+      const price = getPrice(p);
       const matchesSearch = p.name.toLowerCase().includes(search) || 
                           p.category.toLowerCase().includes(search) ||
                           (p.agentName || '').toLowerCase().includes(search);
       const matchesCategory = selectedCategory === 'All' || p.category.includes(selectedCategory);
-      return matchesSearch && matchesCategory;
+      const matchesPrice = price >= priceRange[0] && price <= priceRange[1];
+      return matchesSearch && matchesCategory && matchesPrice;
     }).sort((a, b) => {
       if (sortBy === 'newest') {
         const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
@@ -163,13 +167,37 @@ export function ShopPage() {
         </header>
 
         {/* Filters & Sorting */}
-        <div className="flex justify-between items-center mb-16 px-2">
-           <div className="flex items-center space-x-2 text-[10px] uppercase font-black tracking-widest text-white/20 italic">
-              <SlidersHorizontal className="w-3 h-3" />
-              <span>Visible Structure: {filteredProducts.length} DESIGNS</span>
-           </div>
+        <div className="flex flex-col md:flex-row md:items-center justify-between mb-16 gap-8">
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center space-x-2 text-[10px] uppercase font-black tracking-widest text-white/20 italic bg-white/5 px-4 py-2 rounded-full border border-white/5">
+                  <SlidersHorizontal className="w-3 h-3" />
+                  <span>Visible Structure: {filteredProducts.length} DESIGNS</span>
+                </div>
+                
+                <div className="flex items-center gap-2 p-1.5 bg-white/5 rounded-2xl border border-white/5 overflow-x-auto no-scrollbar max-w-full">
+                  {[
+                    { label: 'Any Yield', range: [0, 10000] as [number, number], id: 'all' },
+                    { label: 'Under ₵100', range: [0, 100] as [number, number], id: 'under-100' },
+                    { label: '₵100 - 200', range: [100, 200] as [number, number], id: '100-200' },
+                    { label: 'Over ₵200', range: [200, 10000] as [number, number], id: 'over-200' }
+                  ].map((filter) => (
+                    <button
+                      key={filter.id}
+                      onClick={() => setPriceRange(filter.range)}
+                      className={cn(
+                        "px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
+                        priceRange[0] === filter.range[0] && priceRange[1] === filter.range[1]
+                          ? "bg-accent text-black shadow-lg shadow-accent/20"
+                          : "text-white/40 hover:text-white hover:bg-white/5"
+                      )}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
            
-           <div className="relative">
+           <div className="relative group">
               <select 
                 value={sortBy}
                 onChange={(e) => setBy(e.target.value)}
@@ -184,9 +212,10 @@ export function ShopPage() {
         </div>
 
         {loading ? (
-          <div className="py-40 flex flex-col items-center space-y-6">
-              <RefreshCw className="w-12 h-12 animate-spin text-accent/20" strokeWidth={1} />
-              <p className="text-[10px] font-black uppercase tracking-editorial text-white/20">Scanning Database...</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <ProductCardSkeleton key={i} />
+            ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">

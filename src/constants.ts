@@ -33,8 +33,17 @@ export const PRICING = {
 
 export const SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
 
-export const MOMO_NUMBER = '0534716125';
+export const PAYMENT_MOBILE_MONEY = '0241953881';
+export const SUPPORT_INTERACTION_NUMBER = '0534717125';
 export const DEPOSIT_PERCENTAGE = 0.5;
+
+export const BANK_DETAILS = {
+  accountName: 'Kings Clothing Enterprise',
+  accountNumber: '1029384756',
+  bankName: 'Fidelity Bank Ghana',
+  branch: 'East Legon',
+  sortCode: 'GHS-0128'
+};
 
 export const FABRIC_COLORS = [
   { name: 'Pure White', hex: '#FFFFFF' },

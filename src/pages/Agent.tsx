@@ -27,7 +27,10 @@ import {
   Trash2,
   Twitter,
   MessageCircle,
-  Share2
+  Share2,
+  Bug,
+  Terminal,
+  Activity
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -47,8 +50,15 @@ import {
   XAxis, 
   YAxis, 
   Tooltip, 
-  CartesianGrid 
+  CartesianGrid,
+  BarChart,
+  Bar,
+  Legend,
+  ComposedChart,
+  Line
 } from 'recharts';
+
+import { reportError, LogLevel } from '../lib/errorReporting';
 
 // Model alias from skill: 'gemini-3-flash-preview' for basic text/image tasks
 const MODEL_NAME = 'gemini-3-flash-preview';
@@ -197,6 +207,111 @@ const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpd
   );
 };
 
+interface SystemLogConsoleProps {
+  logs: any[];
+}
+
+const SystemLogConsole: React.FC<SystemLogConsoleProps> = ({ logs }) => {
+  const [filter, setFilter] = useState<LogLevel | 'all'>('all');
+  
+  const filteredLogs = useMemo(() => {
+    if (filter === 'all') return logs;
+    return logs.filter(log => log.level === filter);
+  }, [logs, filter]);
+
+  return (
+    <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col h-[600px] shadow-2xl">
+      <div className="p-8 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+        <div>
+          <div className="flex items-center space-x-3 mb-1">
+            <Terminal className="w-4 h-4 text-accent" />
+            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-accent">Kernel Log Stream</span>
+          </div>
+          <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white">Debugger Analytics</h3>
+        </div>
+        <div className="flex bg-white/5 p-1.5 rounded-2xl border border-white/5">
+          {(['all', LogLevel.ERROR, LogLevel.FATAL, LogLevel.WARN, LogLevel.INFO] as const).map(lvl => (
+            <button
+              key={lvl}
+              onClick={() => setFilter(lvl)}
+              className={cn(
+                "px-5 py-2 rounded-xl text-[9px] font-black uppercase transition-all tracking-widest",
+                filter === lvl ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white hover:bg-white/5"
+              )}
+            >
+              {lvl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-3 font-mono">
+        {filteredLogs.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-white/20 space-y-4">
+            <Activity className="w-12 h-12 stroke-[1]" />
+            <p className="text-[10px] font-black uppercase tracking-widest">No terminal exceptions recorded</p>
+          </div>
+        ) : (
+          filteredLogs.map((log, idx) => (
+            <motion.div
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              key={log.id || idx}
+              className="group p-4 bg-white/2 border border-white/5 rounded-2xl hover:bg-white/5 transition-all"
+            >
+              <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex items-center space-x-3">
+                  <span className={cn(
+                    "px-2 py-0.5 rounded text-[8px] font-black uppercase",
+                    log.level === LogLevel.FATAL ? "bg-red-500 text-white" :
+                    log.level === LogLevel.ERROR ? "bg-red-500/20 text-red-500" :
+                    log.level === LogLevel.WARN ? "bg-orange-500/20 text-orange-500" :
+                    "bg-blue-500/20 text-blue-500"
+                  )}>
+                    {log.level}
+                  </span>
+                  <span className="text-[10px] text-white/20 font-black">{log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString() : 'PENDING...'}</span>
+                </div>
+                <span className="text-[9px] text-white/10 group-hover:text-white/40 transition-colors uppercase font-black truncate max-w-[200px]">{log.url}</span>
+              </div>
+              
+              <p className="text-[11px] text-white/80 font-black leading-relaxed break-all mb-3">{log.message}</p>
+              
+              <div className="flex items-center gap-3">
+                {log.userId && (
+                  <span className="text-[8px] font-black uppercase py-1 px-2 bg-white/5 rounded-md text-white/30 border border-white/5">
+                    UID: {log.userId}
+                  </span>
+                )}
+                {log.context?.type && (
+                  <span className="text-[8px] font-black uppercase py-1 px-2 bg-accent/10 rounded-md text-accent border border-accent/20">
+                    TYPE: {log.context.type}
+                  </span>
+                )}
+              </div>
+
+              {log.stack && (
+                <div className="mt-4 p-4 bg-black/60 rounded-xl overflow-x-auto hidden group-hover:block border border-white/5 transition-all">
+                  <pre className="text-[9px] text-red-400/60 leading-tight block whitespace-pre-wrap">
+                    {log.stack}
+                  </pre>
+                </div>
+              )}
+            </motion.div>
+          ))
+        )}
+      </div>
+      
+      <div className="p-6 border-t border-white/10 bg-white/[0.01]">
+        <div className="flex items-center justify-between text-[8px] font-black uppercase tracking-[0.2em] text-white/10">
+          <span>Total Log Buffer: {filteredLogs.length} Entries</span>
+          <span>Security Protocol: RSA-4096 Encrypted Transmission</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export function AgentPortal() {
   const { user, agentProfile, loading, isBrandOwner } = useAuth();
   const navigate = useNavigate();
@@ -231,12 +346,11 @@ export function AgentPortal() {
   const [payouts, setPayouts] = useState<any[]>([]);
   const [allAgents, setAllAgents] = useState<any[]>([]);
   const [allDesigns, setAllDesigns] = useState<any[]>([]);
-  const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
+  const [systemLogs, setSystemLogs] = useState<any[]>([]);
   const [referralCode, setReferralCode] = useState(agentProfile?.referralCode || '');
 
   // Sync state with profile data
   useEffect(() => {
-    if (agentProfile?.momoNumber) setMomoNumber(agentProfile.momoNumber);
     if (agentProfile?.referralCode) setReferralCode(agentProfile.referralCode);
   }, [agentProfile]);
 
@@ -401,6 +515,7 @@ export function AgentPortal() {
     // Fetch all agents for brand owner to track performance
     let unsubscribeAllAgents = () => {};
     let unsubscribeAllDesigns = () => {};
+    let unsubscribeLogs = () => {};
     if (isBrandOwner) {
       const agentsQuery = query(collection(db, 'agents'));
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
@@ -410,6 +525,15 @@ export function AgentPortal() {
       const designsQuery = query(collection(db, 'products'));
       unsubscribeAllDesigns = onSnapshot(designsQuery, (snapshot) => {
         setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      const logsQuery = query(collection(db, 'system_logs'));
+      unsubscribeLogs = onSnapshot(logsQuery, (snapshot) => {
+        setSystemLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)).sort((a: any, b: any) => {
+          const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : 0;
+          const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : 0;
+          return tB - tA;
+        }));
       });
     }
 
@@ -422,6 +546,7 @@ export function AgentPortal() {
       unsubscribeAllAgents();
       unsubscribeAllDesigns();
       unsubscribeAllOrders();
+      unsubscribeLogs();
     };
   }, [user, isBrandOwner]);
 
@@ -708,7 +833,12 @@ export function AgentPortal() {
           basePrice: 150,
           category: 'T-Shirts',
           isPrivate: true,
-          allowedColors: FABRIC_COLORS.map(c => c.name)
+          allowedColors: FABRIC_COLORS.map(c => c.name),
+          gsmOptions: ['260'] as GSM[],
+          gsmPrices: { '260': 150 } as Record<string, number>,
+          colorImages: {},
+          colorStudioImages: {},
+          colorBlueprints: {}
         });
         setUploadProgress(0);
       }, 500);
@@ -724,7 +854,6 @@ export function AgentPortal() {
     if (!user) return;
     try {
       await updateDoc(doc(db, 'agents', user.uid), {
-        momoNumber: momoNumber,
         referralCode: referralCode.toUpperCase().trim()
       });
       toast.success('Agent profile updated');
@@ -1010,6 +1139,175 @@ export function AgentPortal() {
               <p className="text-[9px] font-bold uppercase tracking-widest text-white/10 italic">{stat.sub}</p>
             </motion.div>
           ))}
+        </section>
+
+        {/* Performance Intelligence - Visual Analytics */}
+        <section className="space-y-12">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-white/5 pb-12">
+            <div className="max-w-xl">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="bg-accent p-2 rounded-lg">
+                  <BarChart3 className="w-4 h-4 text-black" />
+                </div>
+                <span className="text-accent text-[10px] font-black uppercase tracking-editorial">Market Intelligence Console</span>
+              </div>
+              <h2 className="text-5xl font-display font-black uppercase italic tracking-tighter text-white">Performance Analytics<span className="text-accent">.</span></h2>
+              <p className="text-white/40 text-[11px] leading-relaxed font-black uppercase tracking-tight italic mt-2">
+                Real-time visualization of your sovereignty's impact. Tracking revenue velocity, commission yield, and design sanctification.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            {/* Revenue & Commission Trend */}
+            <div className="lg:col-span-8 bg-white/5 border border-white/10 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
+                <Zap className="w-32 h-32 text-accent" strokeWidth={1} />
+              </div>
+              <div className="flex items-center justify-between mb-12">
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-accent mb-1 italic">Financial Velocity</h3>
+                  <p className="text-[9px] font-black uppercase text-white/20">Sales & Commission (GHS) • 6 Month Blueprint</p>
+                </div>
+                <div className="flex items-center space-x-6">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-accent" />
+                    <span className="text-[8px] font-black uppercase text-white/40 tracking-widest">Revenue</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-white/20" />
+                    <span className="text-[8px] font-black uppercase text-white/40 tracking-widest">Commission</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-[400px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f27d26" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#f27d26" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorComm" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ffffff" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#ffffff" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: 900 }} 
+                      dy={10}
+                    />
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: 900 }}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: '#0a0a0a', 
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '1rem',
+                        fontSize: '10px',
+                        fontWeight: '900',
+                        textTransform: 'uppercase'
+                      }}
+                      itemStyle={{ color: '#f27d26' }}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="sales" 
+                      stroke="#f27d26" 
+                      strokeWidth={4}
+                      fillOpacity={1} 
+                      fill="url(#colorSales)" 
+                      animationDuration={2000}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="commission" 
+                      stroke="#ffffff" 
+                      strokeWidth={2}
+                      strokeOpacity={0.2}
+                      fillOpacity={1} 
+                      fill="url(#colorComm)" 
+                      animationDuration={2500}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Design Approval Velocity */}
+            <div className="lg:col-span-4 bg-white/5 border border-white/10 p-8 rounded-[3rem] shadow-2xl relative overflow-hidden group flex flex-col">
+              <div className="absolute -bottom-8 -left-8 p-8 opacity-5 pointer-events-none">
+                <Palette className="w-32 h-32 text-accent" strokeWidth={1} />
+              </div>
+              <div className="mb-12">
+                <h3 className="text-xs font-black uppercase tracking-widest text-accent mb-1 italic">Creative Output</h3>
+                <p className="text-[9px] font-black uppercase text-white/20">Approved Designs History</p>
+              </div>
+
+              <div className="h-[250px] w-full mb-8">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis 
+                      dataKey="name" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 10, fontWeight: 900 }} 
+                      dy={10}
+                    />
+                    <Tooltip 
+                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                      contentStyle={{ 
+                        backgroundColor: '#0a0a0a', 
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '1rem',
+                        fontSize: '10px',
+                        fontWeight: '900'
+                      }}
+                    />
+                    <Bar 
+                      dataKey="designs" 
+                      fill="#f27d26" 
+                      radius={[6, 6, 0, 0]} 
+                      barSize={20}
+                      animationDuration={1500}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="mt-auto space-y-6 pt-6 border-t border-white/5">
+                <div className="flex justify-between items-center">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-black uppercase text-white/40 tracking-widest">Global Approval Rate</p>
+                    <p className="text-2xl font-display font-black text-white italic">
+                      {myDesigns.length > 0 
+                        ? Math.round((myDesigns.filter(d => d.status === 'approved').length / myDesigns.length) * 100) 
+                        : 0}%
+                    </p>
+                  </div>
+                  <div className="bg-accent/10 p-3 rounded-2xl">
+                    <CheckCircle2 className="w-5 h-5 text-accent" />
+                  </div>
+                </div>
+                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                   <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${myDesigns.length > 0 ? (myDesigns.filter(d => d.status === 'approved').length / myDesigns.length) * 100 : 0}%` }}
+                      className="h-full bg-accent shadow-[0_0_10px_#f27d26]" 
+                   />
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* Uploaded and Approved Designs (Strategic Flow Replacement) */}
@@ -1857,109 +2155,133 @@ export function AgentPortal() {
                   </div>
                 </div>
 
-                {/* Agent Performance Leaderboard */}
-                <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white">
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
-                     <div className="flex items-center space-x-6">
-                        <div className="bg-purple-500/20 p-5 rounded-3xl border border-purple-500/20">
-                           <Users className="w-10 h-10 text-purple-400" />
-                        </div>
-                        <div>
-                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Agent Ecosystem</h2>
-                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Leaderboard & Network Scalability</p>
-                        </div>
-                     </div>
-                     <div className="bg-white/5 border border-white/10 px-8 py-5 rounded-2xl">
-                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30">Active Network</p>
-                        <p className="text-2xl font-mono font-black text-white">{allAgents.length} Agents</p>
-                     </div>
+        {/* Agent Performance Leaderboard */}
+        {isBrandOwner && (
+          <section className="space-y-12">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-white/5 pb-12">
+              <div className="max-w-xl">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="bg-purple-500/20 p-2 rounded-lg">
+                    <Users className="w-4 h-4 text-purple-400" />
                   </div>
-
-                  <div className="bg-black/20 rounded-[2.5rem] border border-white/10 overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left min-w-[800px]">
-                        <thead>
-                          <tr className="border-b border-white/10 bg-white/5">
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Agent Authority</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Referral Velocity</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Design Authority</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Revenue Breakdown</th>
-                            <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Total Ecosystem Yield</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {agentPerformance.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="px-10 py-24 text-center">
-                                <p className="text-sm font-bold uppercase tracking-[0.3em] text-white/10 italic">No agents active in the network yet.</p>
-                              </td>
-                            </tr>
-                          ) : (
-                            agentPerformance.map((agent, index) => (
-                              <tr key={agent.id} className="border-b border-white/5 hover:bg-white/10 transition-colors group">
-                                <td className="px-10 py-8">
-                                  <div className="flex items-center space-x-5">
-                                    <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center font-black text-xs text-white/40 border border-white/10">
-                                      {index + 1}
-                                    </div>
-                                    <div>
-                                      <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{agent.name || 'Anonymous Agent'}</p>
-                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter mb-1">{agent.email}</p>
-                                      <div className="flex gap-2">
-                                        <span className="text-[7px] font-black uppercase text-accent/40 tracking-widest border border-accent/10 px-1.5 py-0.5 rounded-md bg-accent/5">CODE: {agent.referralCode || 'NONE'}</span>
-                                        <span className="text-[7px] font-black uppercase text-white/20 tracking-widest border border-white/5 px-1.5 py-0.5 rounded-md bg-white/2">MOMO: {agent.momoNumber || 'NONE'}</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="px-10 py-8 text-center border-x border-white/5">
-                                   <div className="flex flex-col items-center">
-                                      <p className="text-lg font-mono font-black text-accent">{agent.successfulCount}/{agent.referralCount}</p>
-                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Closed/Total</p>
-                                   </div>
-                                </td>
-                                <td className="px-10 py-8 text-center border-x border-white/5">
-                                   <div className="flex flex-col items-center">
-                                      <p className="text-lg font-mono font-black text-white">{agent.approvedDesigns}/{agent.designCount}</p>
-                                      <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Approved/Total</p>
-                                      <div className="mt-2 w-16 h-1 bg-white/5 rounded-full overflow-hidden">
-                                        <div className="h-full bg-accent" style={{ width: `${agent.approvalRate}%` }} />
-                                      </div>
-                                   </div>
-                                </td>
-                                <td className="px-10 py-8">
-                                  <div className="space-y-2">
-                                    <div className="flex justify-between items-center bg-white/5 px-3 py-1 rounded-lg">
-                                      <span className="text-[8px] font-black uppercase text-white/40">Referral</span>
-                                      <span className="text-[10px] font-mono font-bold text-white">{formatGHC(agent.referralRevenue)}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center bg-white/5 px-3 py-1 rounded-lg">
-                                      <span className="text-[8px] font-black uppercase text-white/40">Design Sales</span>
-                                      <span className="text-[10px] font-mono font-bold text-accent">{formatGHC(agent.designRevenue)}</span>
-                                    </div>
-                                  </div>
-                                </td>
-                                <td className="px-10 py-8">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <p className="text-lg font-mono font-black text-white">{formatGHC(agent.totalRevenue)}</p>
-                                    <span className="text-[10px] font-black text-accent">{Math.round(agent.growthRate)}% Score</span>
-                                  </div>
-                                  <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                     <motion.div 
-                                        initial={{ width: 0 }}
-                                        animate={{ width: `${agent.growthRate}%` }}
-                                        className="h-full bg-accent" 
-                                     />
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <span className="text-purple-400 text-[10px] font-black uppercase tracking-editorial">Agency Intelligence Hub</span>
                 </div>
+                <h2 className="text-5xl font-display font-black uppercase italic tracking-tighter text-white">Agent Ecosystem Yield<span className="text-accent">.</span></h2>
+              </div>
+            </div>
+
+            {/* Aggregated Agency Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              {[
+                { 
+                  label: 'Alliance Total Sales', 
+                  value: formatGHC(agentPerformance.reduce((acc, a) => acc + a.totalRevenue, 0)), 
+                  icon: BarChart3,
+                  sub: 'Combined Revenue'
+                },
+                { 
+                  label: 'Alliance Commissions', 
+                  value: formatGHC(agentPerformance.reduce((acc, a) => acc + a.commissionPaid, 0)), 
+                  icon: Wallet,
+                  sub: 'Total Agent Payouts'
+                },
+                { 
+                  label: 'Sanctified Blueprints', 
+                  value: agentPerformance.reduce((acc, a) => acc + a.approvedDesigns, 0), 
+                  icon: ShieldCheck,
+                  sub: 'Agency Wide Designs'
+                },
+                { 
+                  label: 'Legion Capacity', 
+                  value: allAgents.length, 
+                  icon: Users,
+                  sub: 'Active Verified Agents'
+                }
+              ].map((stat, i) => (
+                <div key={i} className="glass p-8 rounded-[2.5rem] border border-white/5 group hover:border-accent/40 transition-all">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-4 italic">{stat.label}</p>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-3xl font-display font-black text-white italic">{stat.value}</h4>
+                    <stat.icon className="w-6 h-6 text-accent group-hover:scale-110 transition-transform" />
+                  </div>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-white/10 mt-2">{stat.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-black/20 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left min-w-[1000px]">
+                  <thead>
+                    <tr className="border-b border-white/10 bg-white/5">
+                      <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60">Agent Authority</th>
+                      <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Referral Velocity</th>
+                      <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Commission Earned</th>
+                      <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-center">Design Authority</th>
+                      <th className="px-10 py-8 text-[11px] font-black uppercase tracking-widest text-white/60 text-right">Total Yield</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agentPerformance.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-10 py-24 text-center">
+                          <p className="text-sm font-bold uppercase tracking-[0.3em] text-white/10 italic">No agents active in the network yet.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      agentPerformance.map((agent, index) => (
+                        <tr key={agent.id} className="border-b border-white/5 hover:bg-white/10 transition-colors group">
+                          <td className="px-10 py-8">
+                            <div className="flex items-center space-x-5">
+                              <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center font-black text-xs text-white/40 border border-white/10">
+                                {index + 1}
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{agent.name || 'Anonymous Agent'}</p>
+                                <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter mb-1">{agent.email}</p>
+                                <div className="flex gap-2">
+                                  <span className="text-[7px] font-black uppercase text-accent/40 tracking-widest border border-accent/10 px-1.5 py-0.5 rounded-md bg-accent/5">CODE: {agent.referralCode || 'NONE'}</span>
+                                  <span className="text-[7px] font-black uppercase text-white/20 tracking-widest border border-white/5 px-1.5 py-0.5 rounded-md bg-white/2">ID: {agent.id.slice(0, 6)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-10 py-8 text-center border-x border-white/5">
+                             <div className="flex flex-col items-center">
+                                <p className="text-lg font-mono font-black text-accent">{agent.successfulCount}/{agent.referralCount}</p>
+                                <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Closed/Total</p>
+                             </div>
+                          </td>
+                          <td className="px-10 py-8 text-center border-x border-white/5">
+                             <div className="flex flex-col items-center">
+                                <p className="text-lg font-mono font-black text-green-500">{formatGHC(agent.commissionPaid)}</p>
+                                <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Total Earned</p>
+                             </div>
+                          </td>
+                          <td className="px-10 py-8 text-center border-x border-white/5">
+                             <div className="flex flex-col items-center">
+                                <p className="text-lg font-mono font-black text-white">{agent.approvedDesigns}/{agent.designCount}</p>
+                                <p className="text-[8px] font-black uppercase text-white/20 tracking-widest mt-1">Approved/Total</p>
+                                <div className="mt-2 w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                                  <div className="h-full bg-accent" style={{ width: `${agent.approvalRate}%` }} />
+                                </div>
+                             </div>
+                          </td>
+                          <td className="px-10 py-8 text-right">
+                             <p className="text-lg font-mono font-black text-white mb-1">{formatGHC(agent.totalRevenue)}</p>
+                             <div className="flex items-center justify-end gap-2 text-[9px] font-black uppercase tracking-widest text-accent">
+                                <span>Impact Score: {Math.round(agent.growthRate)}%</span>
+                             </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
 
                 <div className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3rem] text-white">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
@@ -2523,7 +2845,7 @@ export function AgentPortal() {
                                                    <p className="text-lg font-black text-white mb-1 group-hover/tab:text-accent transition-all leading-none italic uppercase tracking-tighter">{performance.name}</p>
                                                    <div className="flex items-center gap-3 mb-2">
                                                       <span className="text-[8px] font-black text-accent/60 uppercase tracking-widest">{performance.referralCode || 'NO_REF'}</span>
-                                                      <span className="text-[8px] font-black text-white/10 uppercase tracking-widest">{performance.momoNumber || 'NO_MOMO'}</span>
+                                                      <span className="text-[8px] font-black text-white/10 uppercase tracking-widest">{performance.id.slice(0, 8)}</span>
                                                    </div>
                                                    <p className="text-[10px] font-black font-mono text-white/20 tracking-[0.1em]">#{performance.id.toUpperCase().slice(0, 16)}</p>
                                                 </td>
@@ -2679,22 +3001,6 @@ export function AgentPortal() {
                         </div>
                      </div>
                   </div>
-
-                  <div className="space-y-4">
-                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-white/20 italic px-2 block">Verified MoMo Instance</label>
-                     <div className="relative group">
-                        <input 
-                           type="text" 
-                           value={momoNumber}
-                           onChange={(e) => setMomoNumber(e.target.value)}
-                           placeholder="DASH_NETWORK_ID" 
-                           className="w-full bg-black/60 border-2 border-white/5 rounded-2xl p-6 text-[14px] font-mono font-black text-accent focus:border-accent outline-none transition-all"
-                        />
-                        <div className="absolute right-6 top-1/2 -translate-y-1/2 text-accent/20">
-                           <CreditCard className="w-5 h-5" />
-                        </div>
-                     </div>
-                  </div>
                   
                   <div className="pt-4">
                      <button 
@@ -2761,6 +3067,28 @@ export function AgentPortal() {
 
           </aside>
         </div>
+
+        {/* System Analysis - Admin Only Debugger */}
+        {isBrandOwner && (
+          <section className="space-y-12">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 border-b border-white/5 pb-12">
+              <div className="max-w-xl">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="bg-red-500 p-2 rounded-lg">
+                    <Bug className="w-4 h-4 text-white" />
+                  </div>
+                  <span className="text-red-500 text-[10px] font-black uppercase tracking-editorial">Terminal Diagnostics Console</span>
+                </div>
+                <h2 className="text-5xl font-display font-black uppercase italic tracking-tighter text-white">System Integrity<span className="text-accent">_</span></h2>
+                <p className="text-white/40 text-[11px] leading-relaxed font-black uppercase tracking-tight italic mt-2">
+                  Unified kernel exception monitoring. Intercepting runtime anomalies and structural logic failures within the kingdom's architecture.
+                </p>
+              </div>
+            </div>
+
+            <SystemLogConsole logs={systemLogs} />
+          </section>
+        )}
       </div>
     </main>
   );

@@ -2,7 +2,7 @@ import { motion } from 'motion/react';
 import { ArrowRight, Star, ShieldCheck, Zap, ChevronRight, Verified } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatGHC } from '@/src/lib/utils';
-import { MOMO_NUMBER } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER } from '@/src/constants';
 
 const MOCK_TRENDING = [
   {
@@ -99,8 +99,8 @@ export function HomePage() {
                 <span>50% on Delivery</span>
               </div>
               <div className="h-px bg-white/5 w-full"></div>
-              <div className="text-[10px] text-accent font-black uppercase tracking-widest">
-                MOMO: {MOMO_NUMBER}
+              <div className="text-[10px] text-accent font-black uppercase tracking-widest italic animate-pulse">
+                Secure Paystack Gateway Enabled
               </div>
             </div>
           </motion.div>

@@ -16,10 +16,18 @@ import { AgentPortal } from "./pages/Agent";
 import { AuthPage } from "./pages/Auth";
 import { AboutPage, TOSPage } from "./pages/StaticPages";
 import { OrderConfirmationPage } from "./pages/OrderConfirmation";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { initGlobalErrorHandlers } from "./lib/errorReporting";
+import { useEffect } from "react";
 
 export default function App() {
+  useEffect(() => {
+    initGlobalErrorHandlers();
+  }, []);
+
   return (
-    <Router>
+    <ErrorBoundary>
+      <Router>
       <AuthProvider>
         <CartProvider>
           <div className="min-h-screen flex flex-col font-sans selection:bg-accent selection:text-black">
@@ -59,6 +67,7 @@ export default function App() {
         </CartProvider>
       </AuthProvider>
     </Router>
+    </ErrorBoundary>
   );
 }
 

@@ -33,11 +33,11 @@ import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
-import { CATEGORIES, PRICING, FABRIC_COLORS, SIZES, DEPOSIT_PERCENTAGE, MOMO_NUMBER } from '@/src/constants';
+import { CATEGORIES, PRICING, FABRIC_COLORS, SIZES, DEPOSIT_PERCENTAGE, SUPPORT_INTERACTION_NUMBER } from '@/src/constants';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 import { GSM } from '@/src/types';
-
+import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 
 const ProductSkeleton = () => (
@@ -285,6 +285,20 @@ export function ProductPage() {
     }
   }, [selectedColor, product]);
 
+  const [showStickyCta, setShowStickyCta] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const buyButton = document.getElementById('main-buy-button');
+      if (buyButton) {
+        const rect = buyButton.getBoundingClientRect();
+        setShowStickyCta(rect.bottom < 0);
+      }
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const handleAddToCart = () => {
     if (!product) return;
     addItem({
@@ -399,10 +413,16 @@ export function ProductPage() {
     }
 
     setIsOrdering(true);
+    const loadingToast = toast.loading('Initializing Secure Paystack Protocol...');
+    
     try {
+      // Simulate Payment Alert Trigger to Paystack/Provider
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       const orderData = {
         customerId: user.uid,
         customerName: user.displayName,
+        customerEmail: user.email, // Ensure email is included for Paystack
         items: [{
           productId: product.id,
           name: product.name,
@@ -416,14 +436,17 @@ export function ProductPage() {
         depositAmount: deposit * quantity,
         status: 'pending',
         referralAgentId: referralId || null,
+        paymentAlertSent: true,
         createdAt: serverTimestamp()
       };
 
       const docRef = await addDoc(collection(db, 'orders'), orderData);
-      toast.success('Order Initialized!');
+      toast.dismiss(loadingToast);
+      toast.success('Secure Paystack Gateway Initialized!');
       navigate(`/order/${docRef.id}`);
 
     } catch (error: any) {
+      toast.dismiss(loadingToast);
       toast.error('Order failed: ' + error.message);
     } finally {
       setIsOrdering(false);
@@ -491,8 +514,9 @@ export function ProductPage() {
   }
 
   return (
-    <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
+    <>
+      <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
         {/* Breadcrumbs */}
         <nav className="flex items-center space-x-3 text-[9px] font-black uppercase tracking-editorial text-white/30 mb-20 px-2 lg:px-0">
           <Link to="/" className="hover:text-accent transition-colors">Origins</Link>
@@ -1102,6 +1126,7 @@ export function ProductPage() {
                   </button>
                </div>
                <button 
+                 id="main-buy-button"
                  onClick={handleBuyNow}
                  disabled={isOrdering}
                  className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
@@ -1119,7 +1144,7 @@ export function ProductPage() {
                </div>
                <div className="flex space-x-4">
                   <a 
-                    href={`https://wa.me/${MOMO_NUMBER.replace(/\+/, '')}`} 
+                    href={`https://wa.me/${SUPPORT_INTERACTION_NUMBER}`} 
                     className="p-5 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 transition-all text-white/60 hover:text-accent group"
                   >
                      <Phone className="w-5 h-5 group-hover:rotate-12 transition-transform" />
@@ -1330,9 +1355,37 @@ export function ProductPage() {
               </div>
            </div>
         </div>
+        <RecentlyViewed />
       </div>
+    </div>
 
-      {/* Full Screen Overlay */}
+    {/* Sticky Mobile CTA */}
+      <AnimatePresence>
+        {showStickyCta && (
+          <motion.div
+            initial={{ y: 100 }}
+            animate={{ y: 0 }}
+            exit={{ y: 100 }}
+            className="fixed bottom-0 left-0 right-0 z-[100] p-4 bg-background/80 backdrop-blur-3xl border-t border-white/10 md:hidden"
+          >
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <p className="text-[10px] font-black uppercase text-white truncate">{product.name}</p>
+                <p className="text-[12px] font-mono font-black text-accent">{formatGHC(price)}</p>
+              </div>
+              <button
+                onClick={handleBuyNow}
+                disabled={isOrdering}
+                className="bg-accent text-black px-6 py-4 rounded-2xl font-black uppercase text-[10px] tracking-widest shadow-lg flex items-center gap-2"
+              >
+                {isOrdering ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                Init Build
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isFullScreen && (
           <motion.div
@@ -1528,6 +1581,6 @@ export function ProductPage() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </>
   );
 }

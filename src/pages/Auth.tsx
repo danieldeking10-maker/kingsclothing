@@ -118,7 +118,7 @@ export function AuthPage() {
                  disabled={isLoading}
                  className="w-full bg-white text-black p-6 rounded-3xl flex items-center justify-center space-x-6 hover:bg-accent transition-all group disabled:opacity-50 active:scale-[0.98] shadow-2xl"
                >
-                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/component/google.svg" alt="Google" className="w-6 h-6 grayscale group-hover:grayscale-0 transition-all" />
+                 <img src="https://authjs.dev/img/providers/google.svg" alt="Google" className="w-6 h-6 grayscale group-hover:grayscale-0 transition-all" />
                  <span className="font-black uppercase tracking-editorial text-[11px] font-sans">Verify with Google Identity</span>
                </button>
 
