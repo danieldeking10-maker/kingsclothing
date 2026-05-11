@@ -5,7 +5,7 @@ import { useCart } from '../lib/CartContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { doc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, addDoc, collection, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 
@@ -23,7 +23,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const handleCheckout = async () => {
     if (!user) {
       toast.error('Identity Verification Required');
-      navigate('/auth');
+      navigate('/auth?redirect=/shop');
       onClose();
       return;
     }
@@ -53,6 +53,15 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       };
 
       const docRef = await addDoc(collection(db, 'orders'), orderData);
+      
+      // Increment salesCount for each product to track trending data
+      const updatePromises = items.map(item => 
+        updateDoc(doc(db, 'products', item.id), {
+          salesCount: increment(item.quantity)
+        })
+      );
+      await Promise.all(updatePromises);
+
       clearCart();
       toast.success('Order Successfully Logged');
       navigate(`/order/${docRef.id}`);

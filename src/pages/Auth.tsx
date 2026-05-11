@@ -4,6 +4,10 @@ import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAler
 import { 
   signInWithPopup, 
   GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -14,43 +18,101 @@ import { cn } from '@/src/lib/utils';
 export function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [searchParams] = useSearchParams();
+  const searchMode = searchParams.get('mode') || 'signin';
+  const [isSignUp, setIsSignUp] = useState(searchMode === 'signup');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  
   const referralId = searchParams.get('ref');
+  const redirectPath = searchParams.get('redirect') || '/agent';
   const navigate = useNavigate();
+
+  const createProfile = async (user: any) => {
+    const docRef = doc(db, 'agents', user.uid);
+    const docSnap = await getDoc(docRef);
+
+    if (!docSnap.exists()) {
+      await setDoc(docRef, {
+        uid: user.uid,
+        name: user.displayName || name,
+        email: user.email,
+        role: 'agent',
+        referredBy: referralId || null,
+        momoNumber: '',
+        referralCode: '',
+        stats: {
+          totalSales: 0,
+          commissionEarned: 0,
+          designsApproved: 0
+        },
+        createdAt: serverTimestamp()
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password || (isSignUp && !name)) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (isSignUp) {
+        const result = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(result.user, { displayName: name });
+        await createProfile(result.user);
+        toast.success(`Welcome to the Kingdom, ${name}!`);
+      } else {
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
+      }
+      navigate(redirectPath);
+    } catch (error: any) {
+      console.error(error);
+      let msg = 'Authentication failed';
+      if (error.code === 'auth/user-not-found') msg = 'No account found with this email';
+      if (error.code === 'auth/wrong-password') msg = 'Incorrect password';
+      if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered';
+      if (error.code === 'auth/weak-password') msg = 'Password should be at least 6 characters';
+      if (error.code === 'auth/invalid-credential') msg = 'Invalid access credentials';
+      toast.error(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error('Please enter your email address first');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast.success('Password reset link deployed to your email');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to send reset link');
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
-      const user = result.user;
+      const isNew = await createProfile(result.user);
 
-      // Check if agent profile exists
-      const docRef = doc(db, 'agents', user.uid);
-      const docSnap = await getDoc(docRef);
-
-      if (!docSnap.exists()) {
-        // Create new profile
-        await setDoc(docRef, {
-          uid: user.uid,
-          name: user.displayName,
-          email: user.email,
-          role: 'agent',
-          referredBy: referralId || null,
-          momoNumber: '',
-          referralCode: '',
-          stats: {
-            totalSales: 0,
-            commissionEarned: 0,
-            designsApproved: 0
-          },
-          createdAt: serverTimestamp()
-        });
-        toast.success(`Welcome to the Kingdom, ${user.displayName}!`);
+      if (isNew) {
+        toast.success(`Welcome to the Kingdom, ${result.user.displayName}!`);
       } else {
-        toast.success(`Welcome back, ${user.displayName}!`);
+        toast.success(`Welcome back, ${result.user.displayName}!`);
       }
       
-      navigate('/agent');
+      navigate(redirectPath);
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || 'Failed to sign in');
@@ -107,39 +169,112 @@ export function AuthPage() {
         <div className="p-8 md:p-20 bg-background relative z-10 flex flex-col justify-center">
           <div className="space-y-12">
             <div className="space-y-4">
-              <span className="text-accent text-[10px] font-black uppercase tracking-editorial block animate-pulse italic">Initialization Sequence</span>
-              <h2 className="text-4xl md:text-5xl font-display font-black uppercase tracking-tighter italic leading-none">Authentication</h2>
-              <p className="text-white/20 text-[10px] font-black uppercase tracking-widest">Connect your digital identity to proceed.</p>
+              <span className="text-accent text-[10px] font-black uppercase tracking-editorial block animate-pulse italic">
+                {isSignUp ? 'Registration Sequence' : 'Initialization Sequence'}
+              </span>
+              <h2 className="text-4xl md:text-5xl font-display font-black uppercase tracking-tighter italic leading-none">
+                {isSignUp ? 'New Citizen' : 'Authentication'}
+              </h2>
+              <p className="text-white/20 text-[10px] font-black uppercase tracking-widest">
+                {isSignUp ? 'Establish your digital footprint in the Kingdom.' : 'Connect your digital identity to proceed.'}
+              </p>
             </div>
 
-            <div className="space-y-6">
-               <button 
-                 onClick={handleGoogleSignIn}
-                 disabled={isLoading}
-                 className="w-full bg-white text-black p-6 rounded-3xl flex items-center justify-center space-x-6 hover:bg-accent transition-all group disabled:opacity-50 active:scale-[0.98] shadow-2xl"
-               >
-                 <img src="https://authjs.dev/img/providers/google.svg" alt="Google" className="w-6 h-6 grayscale group-hover:grayscale-0 transition-all" />
-                 <span className="font-black uppercase tracking-editorial text-[11px] font-sans">Verify with Google Identity</span>
-               </button>
+            <form onSubmit={handleEmailAuth} className="space-y-6">
+              {isSignUp && (
+                <div className="space-y-2">
+                  <div className="relative group">
+                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                    <input 
+                      type="text" 
+                      placeholder="FULL NAME"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
+                    />
+                  </div>
+                </div>
+              )}
+              
+              <div className="space-y-2">
+                <div className="relative group">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                  <input 
+                    type="email" 
+                    placeholder="EMAIL ADDRESS"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
+                  />
+                </div>
+              </div>
 
-               <div className="relative pt-4">
-                 <div className="absolute inset-0 flex items-center px-2 pt-4">
-                    <div className="w-full border-t border-white/5"></div>
-                 </div>
-                 <div className="relative flex justify-center text-[8px] uppercase font-black tracking-[0.4em]"><span className="bg-background px-6 text-white/10 italic">Encrypted Connection</span></div>
-               </div>
+              <div className="space-y-2">
+                <div className="relative group">
+                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                  <input 
+                    type="password" 
+                    placeholder="ACCESS KEY"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
+                  />
+                </div>
+                {!isSignUp && (
+                  <button 
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-[8px] font-black uppercase tracking-widest text-white/20 hover:text-accent transition-colors ml-2"
+                  >
+                    Restore Access Credentials
+                  </button>
+                )}
+              </div>
+
+              <button 
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-accent text-black p-5 rounded-2xl font-black uppercase tracking-editorial text-[10px] flex items-center justify-center space-x-3 hover:bg-white transition-all disabled:opacity-50 shadow-xl"
+              >
+                {isLoading ? <Zap className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
+                <span>{isSignUp ? 'Initialize Citizenship' : 'Deploy Identity'}</span>
+              </button>
+
+              <div className="relative pt-4">
+                <div className="absolute inset-0 flex items-center px-2 pt-4">
+                  <div className="w-full border-t border-white/5"></div>
+                </div>
+                <div className="relative flex justify-center text-[8px] uppercase font-black tracking-[0.4em]">
+                  <span className="bg-background px-6 text-white/10 italic">OR USE EXTERNAL AUTH</span>
+                </div>
+              </div>
+
+              <button 
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isLoading}
+                className="w-full bg-white/5 text-white/60 p-5 rounded-2xl flex items-center justify-center space-x-6 hover:bg-white hover:text-black transition-all group disabled:opacity-50 border border-white/10"
+              >
+                <img src="https://authjs.dev/img/providers/google.svg" alt="Google" className="w-5 h-5 grayscale group-hover:grayscale-0 transition-all" />
+                <span className="font-black uppercase tracking-editorial text-[10px]">Authenticate with Google</span>
+              </button>
+            </form>
+
+            <div className="pt-6 text-center">
+              <button 
+                 onClick={() => setIsSignUp(!isSignUp)}
+                 className="text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
+              >
+                 {isSignUp ? 'Already a Citizen? Return to Authentication' : 'New to the Kingdom? Request Citizenship'}
+              </button>
             </div>
 
-            <div className="pt-12 space-y-8">
-               <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
-                  <div className="flex items-center space-x-3">
-                     <div className="w-2 h-2 rounded-full bg-accent" />
-                     <p className="text-[9px] font-black uppercase tracking-widest text-white/40">Order Integration</p>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                     <div className="w-2 h-2 rounded-full bg-white/10" />
-                     <p className="text-[9px] font-black uppercase tracking-widest text-white/40">Commission Engine</p>
-                  </div>
+            <div className="pt-8 space-y-4">
+               <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex items-center justify-between">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-white/20">Protocol Status</p>
+                  <p className="text-[9px] font-black uppercase tracking-widest text-accent flex items-center gap-2">
+                    <ShieldCheck className="w-3 h-3" /> Encrypted
+                  </p>
                </div>
 
                <p className="text-[9px] text-white/20 uppercase font-black tracking-widest leading-relaxed text-center">

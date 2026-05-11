@@ -18,6 +18,7 @@ import {
   Facebook,
   Twitter,
   MessageCircle,
+  Video,
   Link as LinkIcon,
   Wand2,
   Star,
@@ -28,7 +29,7 @@ import {
   Layers,
   Edit3
 } from 'lucide-react';
-import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
@@ -39,6 +40,7 @@ import { toast } from 'react-hot-toast';
 import { GSM } from '@/src/types';
 import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
+import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
 
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
@@ -107,7 +109,7 @@ export function ProductPage() {
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [imageLoading, setImageLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'mockup' | 'studio' | 'blueprint'>('studio');
+  const [viewMode, setViewMode] = useState<'blueprint' | 'studio' | 'mockup'>('mockup');
   const [selectedGsm, setSelectedGsm] = useState<GSM>('260');
   const [selectedColor, setSelectedColor] = useState(FABRIC_COLORS[0]);
   const [selectedSize, setSelectedSize] = useState('L');
@@ -115,6 +117,7 @@ export function ProductPage() {
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isVeoOpen, setIsVeoOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -237,18 +240,6 @@ export function ProductPage() {
     
     const colorGsmKey = `${selectedColor.name}-${selectedGsm}`;
 
-    if (viewMode === 'studio') {
-      // 1. Ultra-Priority: GSM-Color Specific Studio Asset
-      if (product.colorStudioImages?.[colorGsmKey]) {
-        return product.colorStudioImages[colorGsmKey];
-      }
-      // 2. High Priority Match: Colour-specific studio shot from the ledger
-      if (product.colorStudioImages?.[selectedColor.name]) {
-        return product.colorStudioImages[selectedColor.name];
-      }
-      return product.studioImage || product.mockupImage;
-    }
-
     if (viewMode === 'blueprint') {
       // 1. Ultra-Priority: GSM-Color Specific Blueprint Asset
       if (product.colorBlueprints?.[colorGsmKey]) {
@@ -261,7 +252,19 @@ export function ProductPage() {
       return product.blueprintImage || product.mockupImage;
     }
 
-    // Mockup Mode (Blueprint in UI)
+    if (viewMode === 'studio') {
+      // 1. Ultra-Priority: GSM-Color Specific Studio Asset
+      if (product.colorStudioImages?.[colorGsmKey]) {
+        return product.colorStudioImages[colorGsmKey];
+      }
+      // 2. High Priority Match: Colour-specific studio shot from the ledger
+      if (product.colorStudioImages?.[selectedColor.name]) {
+        return product.colorStudioImages[selectedColor.name];
+      }
+      return product.studioImage || product.mockupImage;
+    }
+
+    // Mockup Mode
     // 1. Ultra-Priority: GSM-Color Specific Mockup Asset
     if (product.colorImages?.[colorGsmKey]) {
       return product.colorImages[colorGsmKey];
@@ -271,19 +274,13 @@ export function ProductPage() {
       return product.colorImages[selectedColor.name];
     }
 
-    // 3. Authority Directive: Fallback to neutral blueprint with CSS color injection
     return product.mockupImage;
   }, [product, selectedColor, viewMode, selectedGsm]);
 
-  // Sync view mode indicator with selected shade asset availability
+  // Sync image loading indicator
   useEffect(() => {
-    setImageLoading(true); // Trigger loading for any asset transition
-    if (product?.colorStudioImages?.[selectedColor.name]) {
-      setViewMode('studio');
-    } else {
-      setViewMode('mockup');
-    }
-  }, [selectedColor, product]);
+    setImageLoading(true);
+  }, [selectedColor, viewMode, selectedGsm, product]);
 
   const [showStickyCta, setShowStickyCta] = useState(false);
 
@@ -336,9 +333,9 @@ export function ProductPage() {
       href: `https://wa.me/?text=${encodeURIComponent(`Check out ${product?.name} from Kings Clothing: ${window.location.href}`)}` 
     },
     { 
-      name: 'Twitter', 
+      name: 'X', 
       icon: Twitter, 
-      color: 'hover:text-sky-400 hover:bg-sky-400/10 hover:border-sky-400/20',
+      color: 'hover:text-white hover:bg-white/10 hover:border-white/20',
       href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(`Forging new authority with ${product?.name} from Kings Clothing.`) }&url=${encodeURIComponent(window.location.href)}` 
     },
     { 
@@ -405,10 +402,23 @@ export function ProductPage() {
     }
   };
 
+  const handleSavePromoVideo = async (videoUrl: string) => {
+    if (!id || !isBrandOwner) return;
+    try {
+      await updateDoc(doc(db, 'products', id), {
+        promoVideos: arrayUnion(videoUrl)
+      });
+      toast.success('Kinetic Asset Saved to Product Ledger');
+    } catch (error) {
+      console.error('Save Video Error:', error);
+      // Even if firestore save fails (due to blob URL length or something), we still let them download
+    }
+  };
+
   const handleBuyNow = async () => {
     if (!user) {
       toast.error('Please sign in to order');
-      navigate('/auth');
+      navigate(`/auth?redirect=/product/${id}`);
       return;
     }
 
@@ -441,6 +451,12 @@ export function ProductPage() {
       };
 
       const docRef = await addDoc(collection(db, 'orders'), orderData);
+
+      // Increment salesCount for the product to track trending data
+      await updateDoc(doc(db, 'products', product.id), {
+        salesCount: increment(quantity)
+      });
+
       toast.dismiss(loadingToast);
       toast.success('Secure Paystack Gateway Initialized!');
       navigate(`/order/${docRef.id}`);
@@ -636,16 +652,16 @@ export function ProductPage() {
               <div className="absolute lg:top-1/2 lg:-translate-y-1/2 top-4 left-4 lg:left-8 flex lg:flex-col flex-row gap-3 py-4 z-20">
                 <div className="flex lg:flex-col flex-row gap-2 p-1.5 glass rounded-2xl border border-white/10 shadow-2xl">
                   <button
-                    onClick={() => setViewMode('mockup')}
+                    onClick={() => setViewMode('blueprint')}
                     className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center transition-all group/btn",
-                      viewMode === 'mockup' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
+                      viewMode === 'blueprint' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
                     )}
-                    title="Mockup Mode"
+                    title="Blueprint Mode"
                   >
-                    <Grid3X3 className="w-5 h-5" />
+                    <Layers className="w-5 h-5" />
                     <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
-                      Design Mode
+                      Technical Blueprint
                     </span>
                   </button>
                   <button
@@ -662,16 +678,16 @@ export function ProductPage() {
                     </span>
                   </button>
                   <button
-                    onClick={() => setViewMode('blueprint')}
+                    onClick={() => setViewMode('mockup')}
                     className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center transition-all group/btn",
-                      viewMode === 'blueprint' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
+                      viewMode === 'mockup' ? "bg-accent text-black scale-105" : "text-white/30 hover:text-white hover:bg-white/5"
                     )}
-                    title="Tech Blueprint"
+                    title="Mockup Mode"
                   >
-                    <Maximize2 className="w-5 h-5" />
+                    <Grid3X3 className="w-5 h-5" />
                     <span className="absolute left-full ml-4 px-3 py-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg text-[8px] font-black uppercase tracking-widest text-white opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-all whitespace-nowrap">
-                      Tech Sheet
+                      Visual Mockup
                     </span>
                   </button>
                 </div>
@@ -783,6 +799,41 @@ export function ProductPage() {
                   ))}
                 </div>
             </div>
+
+            {/* Veo Promotional Video Feature - Restricted to Brand Owner/Admin */}
+            {(isBrandOwner || user?.email === 'danieldeking10@gmail.com') && (
+              <div className="pt-8 border-t border-white/5">
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center space-x-3">
+                    <Video className="w-4 h-4 text-accent" />
+                    <span className="text-[12px] font-black uppercase tracking-[0.3em] text-white italic">Kinetic Creator</span>
+                  </div>
+                  <button 
+                    onClick={() => setIsVeoOpen(!isVeoOpen)}
+                    className="text-[9px] font-black uppercase tracking-widest text-accent hover:text-white transition-colors"
+                  >
+                    {isVeoOpen ? 'Collapse Engine' : 'Deploy Veo R3.1'}
+                  </button>
+                </div>
+
+                <AnimatePresence>
+                  {isVeoOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <VeoVideoGenerator 
+                        product={product} 
+                        startingImage={activeImage}
+                        onVideoGenerated={handleSavePromoVideo}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </div>
 
           {/* Right: Info & Config (Span 5) */}
@@ -818,6 +869,37 @@ export function ProductPage() {
               <p className="text-white/40 text-lg leading-relaxed font-light font-sans max-w-md">
                 {product.description}
               </p>
+
+              {/* Enhanced Social Sharing Feature */}
+              <div className="mt-8 flex items-center space-x-6">
+                <div className="flex -space-x-2">
+                  {sharePlatforms.map((platform) => (
+                    <motion.a
+                      key={platform.name}
+                      href={platform.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      whileHover={{ y: -4, zIndex: 20 }}
+                      className={cn(
+                        "w-12 h-12 rounded-full bg-white/5 border border-white/10 backdrop-blur-xl flex items-center justify-center transition-all shadow-xl hover:border-accent/50 hover:bg-accent/5 hover:text-accent",
+                      )}
+                      title={`Share on ${platform.name}`}
+                    >
+                      <platform.icon className="w-5 h-5" />
+                    </motion.a>
+                  ))}
+                  <motion.button
+                    whileHover={{ y: -4, zIndex: 20 }}
+                    onClick={copyToClipboard}
+                    className="w-12 h-12 rounded-full bg-white/5 border border-white/10 backdrop-blur-xl flex items-center justify-center transition-all shadow-xl hover:border-accent/50 hover:bg-accent/5 hover:text-accent"
+                    title="Copy Authority Link"
+                  >
+                    <LinkIcon className="w-5 h-5" />
+                  </motion.button>
+                </div>
+                <div className="h-4 w-px bg-white/10" />
+                <span className="text-[9px] font-black uppercase tracking-widest text-white/20 italic">Share Authority</span>
+              </div>
 
               {/* AI Narrative Button (Simplified) */}
               <div className="mt-8">
@@ -886,14 +968,14 @@ export function ProductPage() {
                </div>
                <div className="flex p-1 bg-white/5 rounded-2xl border border-white/5 space-x-1">
                   <button
-                    onClick={() => setViewMode('mockup')}
+                    onClick={() => setViewMode('blueprint')}
                     className={cn(
                       "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2",
-                      viewMode === 'mockup' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
+                      viewMode === 'blueprint' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
                     )}
                   >
-                    <Grid3X3 className="w-3.5 h-3.5" />
-                    Design
+                    <Layers className="w-3.5 h-3.5" />
+                    Blueprint
                   </button>
                   <button
                     onClick={() => setViewMode('studio')}
@@ -906,14 +988,14 @@ export function ProductPage() {
                     Studio
                   </button>
                   <button
-                    onClick={() => setViewMode('blueprint')}
+                    onClick={() => setViewMode('mockup')}
                     className={cn(
                       "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2",
-                      viewMode === 'blueprint' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
+                      viewMode === 'mockup' ? "bg-accent text-black shadow-xl" : "text-white/40 hover:text-white"
                     )}
                   >
-                    <Maximize2 className="w-3.5 h-3.5" />
-                    Tech
+                    <Grid3X3 className="w-3.5 h-3.5" />
+                    Mockup
                   </button>
                </div>
             </div>
@@ -1441,7 +1523,7 @@ export function ProductPage() {
                 <div className="glass p-6 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity">
                   <h2 className="text-2xl font-display font-black uppercase italic text-white mb-2">{product.name}</h2>
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/40 italic">
-                    {viewMode === 'mockup' ? 'Blueprint Data Visualization' : 'Studio Heritage Shot'}
+                    {viewMode === 'blueprint' ? 'Technical Blueprint Visualization' : viewMode === 'studio' ? 'Studio Heritage Shot' : 'Visual Mockup Render'}
                   </p>
                 </div>
               </div>

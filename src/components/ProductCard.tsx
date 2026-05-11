@@ -40,8 +40,10 @@ const getProductPrice = (product: any, selectedGsm: GSM): number => {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDelete, onUpdatePrice, isNew }) => {
   const { addItem } = useCart();
-  const [tags, setTags] = React.useState<string[]>([]);
+  // AI Tags Section
+  const [tags, setTags] = React.useState<string[]>(product.aiTags || []);
   const [loadingTags, setLoadingTags] = React.useState(false);
+
   const [showShareMenu, setShowShareMenu] = React.useState(false);
   const [isGsmModalOpen, setIsGsmModalOpen] = React.useState(false);
   const [gsmPrices, setGsmPrices] = React.useState<Record<string, string>>({
@@ -109,16 +111,28 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
 
   React.useEffect(() => {
     const fetchTags = async () => {
+      if (product.aiTags && product.aiTags.length > 0) return;
+      
       setLoadingTags(true);
-      const generatedTags = await generateProductTags(product.name, product.category, product.description || '');
-      setTags(generatedTags);
-      setLoadingTags(false);
+      try {
+        const generatedTags = await generateProductTags(product.name, product.category, product.description || '');
+        setTags(generatedTags);
+        // Persist tags to Firestore for caching
+        const productRef = doc(db, 'products', product.id);
+        await updateDoc(productRef, {
+          aiTags: generatedTags
+        });
+      } catch (error) {
+        console.error('Failed to generate/save tags:', error);
+      } finally {
+        setLoadingTags(false);
+      }
     };
 
-    if (product.name) {
+    if (product.name && (!product.aiTags || product.aiTags.length === 0)) {
       fetchTags();
     }
-  }, [product.name, product.category, product.description]);
+  }, [product.id, product.name, product.category, product.description, product.aiTags]);
 
   const handleQuickAdd = (e: React.MouseEvent) => {
     e.preventDefault();

@@ -371,13 +371,13 @@ export function Header() {
                   <User className="hidden lg:block w-4 h-4 text-white/20" />
                   <div className="flex items-center space-x-2 lg:space-x-6">
                     <Link 
-                      to="/auth" 
+                      to="/auth?mode=signin" 
                       className="text-[10px] font-black uppercase tracking-editorial text-white/40 hover:text-white transition-colors"
                     >
                       Sign In
                     </Link>
                     <Link 
-                      to="/auth" 
+                      to="/auth?mode=signup" 
                       className="text-[10px] font-black uppercase tracking-editorial bg-accent text-black px-4 lg:px-10 py-2.5 lg:py-3 rounded-full hover:bg-white hover:scale-105 transition-all shadow-[0_0_40px_rgba(242,125,38,0.15)]"
                     >
                       Sign Up
@@ -641,14 +641,14 @@ export function Header() {
                     ) : (
                       <div className="grid grid-cols-2 gap-3">
                         <Link 
-                          to="/auth" 
+                          to="/auth?mode=signin" 
                           onClick={() => setIsMenuOpen(false)} 
                           className="py-5 bg-white text-black text-center text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-accent transition-all active:scale-95"
                         >
                           Login
                         </Link>
                         <Link 
-                          to="/auth" 
+                          to="/auth?mode=signup" 
                           onClick={() => setIsMenuOpen(false)} 
                           className="py-5 bg-white/5 border border-white/10 text-white text-center text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-white/10 transition-all active:scale-95"
                         >

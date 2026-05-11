@@ -30,7 +30,9 @@ import {
   Share2,
   Bug,
   Terminal,
-  Activity
+  Activity,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -558,7 +560,8 @@ export function AgentPortal() {
     if (!isBrandOwner) return [];
     return allAgents.map(agent => {
       // 1. Referral Stats (Marketing performance)
-      const agentReferrals = referrals.filter(r => r.referralAgentId === agent.id);
+      // Filter out cancelled orders for accurate metrics
+      const agentReferrals = referrals.filter(r => r.referralAgentId === agent.id && r.status !== 'cancelled');
       const successfulReferrals = agentReferrals.filter(r => r.status === 'completed');
       const referralRevenue = agentReferrals.reduce((acc, r) => acc + (r.totalAmount || 0), 0);
       const commissionPaid = agentReferrals.reduce((acc, r) => acc + (r.depositAmount || 0) * 0.1, 0);
@@ -571,10 +574,10 @@ export function AgentPortal() {
         : 0;
 
       // 3. Design Sales (Direct product interest)
-      // Attribute sales specifically from designs this agent uploaded
+      // Attribute sales specifically from designs this agent uploaded, excluding cancelled
       const designIds = new Set(agentDesigns.map(d => d.id));
       const salesFromDesigns = allOrders.filter(order => 
-        order.items?.some((item: any) => designIds.has(item.productId))
+        order.status !== 'cancelled' && order.items?.some((item: any) => designIds.has(item.productId))
       );
       const designRevenue = salesFromDesigns.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
       
@@ -865,10 +868,65 @@ export function AgentPortal() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!isBrandOwner) return;
     try {
-      await updateDoc(doc(db, 'orders', orderId), {
+      const orderRef = doc(db, 'orders', orderId);
+      const orderSnap = await getDoc(orderRef);
+      if (!orderSnap.exists()) return;
+      const orderData = orderSnap.data();
+      const oldStatus = orderData.status;
+
+      await updateDoc(orderRef, {
         status: newStatus,
         updatedAt: serverTimestamp()
       });
+
+      // Handle Stats based on status transition
+      if (orderData.customerId) {
+        const agentRef = doc(db, 'agents', orderData.customerId);
+        
+        // 1. Pending -> Processing (Confirmed)
+        if (oldStatus === 'pending' && newStatus === 'processing') {
+          await updateDoc(agentRef, {
+            'stats.totalSales': increment(orderData.totalAmount)
+          });
+          
+          // Credit Referrer
+          const agentDoc = await getDoc(agentRef);
+          const agentData = agentDoc.data();
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            await updateDoc(referrerRef, {
+              'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
+            });
+          }
+        }
+        
+        // 2. Processing+ -> Cancelled (Deduct)
+        if (oldStatus !== 'pending' && oldStatus !== 'cancelled' && newStatus === 'cancelled') {
+          // Deduct from salesCount for each product to maintain accurate trending data
+          const items = orderData.items || [];
+          const salesUpdatePromises = items.map((item: any) => 
+            updateDoc(doc(db, 'products', item.productId), {
+              salesCount: increment(-item.quantity)
+            })
+          );
+          await Promise.all(salesUpdatePromises);
+
+          await updateDoc(agentRef, {
+            'stats.totalSales': increment(-orderData.totalAmount)
+          });
+          
+          // Reverse Referrer Commission
+          const agentDoc = await getDoc(agentRef);
+          const agentData = agentDoc.data();
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            await updateDoc(referrerRef, {
+              'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
+            });
+          }
+        }
+      }
+
       toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
     } catch (error: any) {
       toast.error('Update failed: ' + error.message);
@@ -1386,18 +1444,30 @@ export function AgentPortal() {
                                 </div>
                              </div>
 
-                             <div className="p-6 bg-white/5 grid grid-cols-2 gap-4">
+                             <div className="p-6 bg-white/5 grid grid-cols-3 gap-3">
                                 <button
                                    onClick={() => navigate(`/product/${design.id}`)}
-                                   className="py-3 rounded-xl border border-white/10 text-[8px] font-black uppercase tracking-widest text-white/40 hover:bg-white hover:text-black transition-all"
+                                   className="py-3 rounded-xl border border-white/10 text-[7px] font-black uppercase tracking-widest text-white/40 hover:bg-white hover:text-black transition-all"
                                 >
                                    Inspect
                                 </button>
                                 <button
-                                   onClick={() => handleDeleteProduct(design.id)}
-                                   className="py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[8px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all flex items-center justify-center"
+                                   onClick={() => handleUpdateProductStatus(design.id, design.status === 'approved' ? 'rejected' : 'approved')}
+                                   className={cn(
+                                      "py-3 rounded-xl border text-[7px] font-black uppercase tracking-widest transition-all flex items-center justify-center",
+                                      design.status === 'approved' 
+                                         ? "border-accent/20 bg-accent/5 text-accent hover:bg-accent hover:text-black" 
+                                         : "border-green-500/20 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white"
+                                   )}
+                                   title={design.status === 'approved' ? 'Remove from Market' : 'Restore to Market'}
                                 >
-                                   <Trash2 className="w-3.5 h-3.5" />
+                                   {design.status === 'approved' ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                </button>
+                                <button
+                                   onClick={() => handleDeleteProduct(design.id)}
+                                   className="py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-[7px] font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all flex items-center justify-center"
+                                >
+                                   <Trash2 className="w-4 h-4" />
                                 </button>
                              </div>
                           </motion.div>

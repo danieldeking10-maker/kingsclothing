@@ -34,7 +34,6 @@ service cloud.firestore {
       return data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.category is string && data.category.size() <= 100
         && data.basePrice is number && data.basePrice >= 0
-        && data.status in ["pending", "approved", "rejected"]
         && (data.status == "pending" || isAdmin()) // Only admin can approve
         && (data.agentId == null || data.agentId == request.auth.uid || isAdmin())
         && (data.createdAt == request.time || data.createdAt == existing().createdAt);
@@ -58,7 +57,7 @@ service cloud.firestore {
     match /agents/{agentId} {
       allow get: if isSignedIn();
       allow list: if isAdmin() || resource.data.referredBy == request.auth.uid;
-      allow create: if isVerifiedUser() && isValidId(agentId) && isValidAgent(incoming()) && incoming().createdAt == request.time && incoming().role != "admin";
+      allow create: if isSignedIn() && isValidId(agentId) && isValidAgent(incoming()) && incoming().createdAt == request.time && incoming().role != "admin";
       allow update: if (isOwner(agentId) || isAdmin())
         && isValidAgent(incoming())
         && incoming().createdAt == existing().createdAt
@@ -78,15 +77,18 @@ service cloud.firestore {
         allow delete: if isAdmin() || isOwner(existing().userId);
       }
       allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == request.time;
-      allow update: if (isAdmin() || (isOwner(existing().agentId) && existing().status == "pending"))
-        && isValidProduct(incoming())
-        && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
-            'status', 'mockupImage', 'studioImage', 'blueprintImage', 'isPrivate', 
-            'updatedAt', 'allowedColors', 'colorStudioImages', 'colorBlueprints', 
-            'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions'
-          ])) ||
-          (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
+      allow update: if (
+          (isVerifiedUser() && incoming().diff(existing()).affectedKeys().hasOnly(['salesCount']) && incoming().salesCount is number) ||
+          ((isAdmin() || (isOwner(existing().agentId) && existing().status == "pending"))
+          && isValidProduct(incoming())
+          && (
+            (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'mockupImage', 'studioImage', 'blueprintImage', 'isPrivate', 
+              'updatedAt', 'allowedColors', 'colorStudioImages', 'colorBlueprints', 
+              'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions', 'salesCount', 'aiTags'
+            ])) ||
+            (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
+          ))
         );
       allow delete: if isAdmin() || isOwner(existing().agentId);
     }

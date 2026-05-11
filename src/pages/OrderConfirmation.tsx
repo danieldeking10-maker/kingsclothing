@@ -201,10 +201,39 @@ export function OrderConfirmationPage() {
     
     setIsCancelling(true);
     try {
+      const wasConfirmed = order.status !== 'pending';
       await updateDoc(doc(db, 'orders', id), {
         status: 'cancelled',
         cancelledAt: new Date().toISOString()
       });
+
+      // Deduct from salesCount for each product to maintain accurate trending data
+      const salesUpdatePromises = order.items.map((item: any) => 
+        updateDoc(doc(db, 'products', item.productId), {
+          salesCount: increment(-item.quantity)
+        })
+      );
+      await Promise.all(salesUpdatePromises);
+
+      // Deduct from stats if it was previously confirmed (incremented)
+      if (wasConfirmed && order.customerId) {
+        const agentRef = doc(db, 'agents', order.customerId);
+        await updateDoc(agentRef, {
+          'stats.totalSales': increment(-order.totalAmount),
+        });
+
+        // Also reverse commission if referredBy exists
+        const agentDoc = await getDoc(agentRef);
+        const agentData = agentDoc.data();
+        if (agentData?.referredBy) {
+          const referrerRef = doc(db, 'agents', agentData.referredBy);
+          const commissionAmount = order.totalAmount * 0.10;
+          await updateDoc(referrerRef, {
+            'stats.commissionEarned': increment(-commissionAmount)
+          });
+        }
+      }
+
       toast.success('Order Cancelled Successfully');
       setIsCancelDialogOpen(false);
     } catch (error) {

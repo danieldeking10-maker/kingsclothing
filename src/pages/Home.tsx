@@ -1,30 +1,76 @@
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { ArrowRight, Star, ShieldCheck, Zap, ChevronRight, Verified } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { collection, query, limit, getDocs, orderBy, where } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { formatGHC } from '@/src/lib/utils';
-import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
 
-const MOCK_TRENDING = [
-  {
-    id: '1',
-    name: "The Midnight Royal",
-    price: 180,
-    category: "Acid Wash Tee",
-    gsm: "260 GSM",
-    image: "https://picsum.photos/seed/hoodie1/800/1000",
-    tag: "NEW"
-  },
-  {
-    id: '3',
-    name: "Accra Hustle",
-    price: 150,
-    category: "Heavyweight",
-    gsm: "320 GSM",
-    image: "https://picsum.photos/seed/hoodie3/800/1000",
+const getPrice = (product: any): number => {
+  const category = product.category;
+  const gsm = (product.gsmOptions && product.gsmOptions[0]) || '260';
+  
+  if (product.gsmPrices && product.gsmPrices[gsm]) {
+    return product.gsmPrices[gsm];
   }
-];
+
+  const globalCategoryPricing = (PRICING as any)[category];
+  if (globalCategoryPricing) {
+    if (typeof globalCategoryPricing === 'object') {
+      return globalCategoryPricing[gsm] || globalCategoryPricing['260'] || 150;
+    }
+    return globalCategoryPricing;
+  }
+  return 150;
+};
 
 export function HomePage() {
+  const [trendingDesigns, setTrendingDesigns] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTrending = async () => {
+      try {
+        // Fetch products ordered by salesCount (denormalized field tracking orders)
+        const trendingSnap = await getDocs(query(
+          collection(db, 'products'),
+          where('status', '==', 'approved'),
+          orderBy('salesCount', 'desc'),
+          limit(4)
+        ));
+
+        let designs = trendingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        // If not enough trending, fill with newest approved
+        if (designs.length < 2) {
+          const newestSnap = await getDocs(query(
+            collection(db, 'products'),
+            where('status', '==', 'approved'),
+            orderBy('createdAt', 'desc'),
+            limit(4)
+          ));
+          const newest = newestSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          
+          // Merge avoiding duplicates
+          newest.forEach(p => {
+            if (!designs.find(d => d.id === p.id)) {
+              designs.push(p);
+            }
+          });
+        }
+
+        setTrendingDesigns(designs.slice(0, 4));
+      } catch (error) {
+        console.error('Failed to fetch trending:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTrending();
+  }, []);
+
   return (
     <div className="bg-background text-foreground min-h-screen flex flex-col">
       <main className="flex-1 flex flex-col lg:flex-row overflow-hidden">
@@ -120,42 +166,57 @@ export function HomePage() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-10 flex-1">
-            {MOCK_TRENDING.map((item, idx) => (
-              <motion.div
-                key={item.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.1 }}
-                viewport={{ once: true }}
-                className="group cursor-pointer"
-              >
-                <div className="aspect-[4/5] bg-[#1A1A1B] mb-6 relative overflow-hidden rounded-2xl grayscale hover:grayscale-0 transition-all duration-700">
-                   <img 
-                     src={item.image} 
-                     alt={item.name} 
-                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000"
-                     referrerPolicy="no-referrer"
-                   />
-                   {item.tag && (
-                     <div className="absolute bottom-4 left-4 bg-accent text-[8px] px-3 py-1 font-black uppercase text-black tracking-widest">
-                       {item.tag}
-                     </div>
-                   )}
-                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-6">
-                      <Link to={`/product/${item.id}`} className="w-full bg-white text-black py-4 rounded-full text-[10px] font-black uppercase tracking-widest text-center">
-                        View Blueprint
-                      </Link>
-                   </div>
+            {loading ? (
+              Array.from({ length: 4 }).map((_, idx) => (
+                <div key={idx} className="animate-pulse">
+                  <div className="aspect-[4/5] bg-white/5 rounded-2xl mb-6" />
+                  <div className="h-4 bg-white/5 rounded w-3/4 mb-2" />
+                  <div className="h-3 bg-white/5 rounded w-1/2" />
                 </div>
-                <div className="flex justify-between items-start">
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-display font-black uppercase italic tracking-tight group-hover:text-accent transition-colors">{item.name}</h4>
-                    <p className="text-[9px] text-white/30 uppercase font-black tracking-widest">{item.category} • {item.gsm}</p>
+              ))
+            ) : (
+              trendingDesigns.map((item, idx) => (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  viewport={{ once: true }}
+                  className="group cursor-pointer"
+                >
+                  <div className="aspect-[4/5] bg-[#1A1A1B] mb-6 relative overflow-hidden rounded-2xl grayscale hover:grayscale-0 transition-all duration-700">
+                    <img 
+                      src={item.mockupImage} 
+                      alt={item.name} 
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000"
+                      referrerPolicy="no-referrer"
+                    />
+                    {idx === 0 && (
+                      <div className="absolute bottom-4 left-4 bg-accent text-[8px] px-3 py-1 font-black uppercase text-black tracking-widest">
+                        TRENDING
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-6">
+                        <Link to={`/product/${item.id}`} className="w-full bg-white text-black py-4 rounded-full text-[10px] font-black uppercase tracking-widest text-center">
+                          View Blueprint
+                        </Link>
+                    </div>
                   </div>
-                  <span className="text-xs font-mono font-black text-accent">{formatGHC(item.price)}</span>
-                </div>
-              </motion.div>
-            ))}
+                  <div className="flex justify-between items-start">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-display font-black uppercase italic tracking-tight group-hover:text-accent transition-colors">{item.name}</h4>
+                      <p className="text-[9px] text-white/30 uppercase font-black tracking-widest">{item.category} • {(item.gsmOptions && item.gsmOptions[0]) || '260'} GSM</p>
+                    </div>
+                    <span className="text-xs font-mono font-black text-accent">{formatGHC(getPrice(item))}</span>
+                  </div>
+                </motion.div>
+              ))
+            )}
+            {!loading && trendingDesigns.length === 0 && (
+              <p className="col-span-full text-white/20 text-[10px] font-black uppercase px-8 py-20 border-2 border-dashed border-white/5 rounded-[2rem] text-center">
+                Market Velocity Insufficient for Trending Data
+              </p>
+            )}
           </div>
 
           {/* Agent CTA Area */}
