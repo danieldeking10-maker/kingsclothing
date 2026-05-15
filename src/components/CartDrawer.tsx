@@ -1,13 +1,14 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Trash2, ShoppingBag, Zap, ShieldCheck } from 'lucide-react';
+import { X, Trash2, ShoppingBag, Zap, ShieldCheck, Phone, ChevronLeft, RefreshCw } from 'lucide-react';
 import { useCart } from '../lib/CartContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { doc, addDoc, collection, serverTimestamp, updateDoc, increment } from 'firebase/firestore';
+import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -19,6 +20,45 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [isOrdering, setIsOrdering] = React.useState(false);
+  const [isPaymentStep, setIsPaymentStep] = React.useState(false);
+  const [momoNumber, setMomoNumber] = React.useState('');
+  const [momoProvider, setMomoProvider] = React.useState<'mtn' | 'telecel' | 'airteltigo'>('mtn');
+  const [couponCode, setCouponCode] = React.useState('');
+  const [appliedCoupon, setAppliedCoupon] = React.useState<any>(null);
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    try {
+      const { query, where, collection, getDocs } = await import('firebase/firestore');
+      const q = query(
+        collection(db, 'coupons'), 
+        where('code', '==', couponCode.toUpperCase()), 
+        where('active', '==', true)
+      );
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const couponData = querySnapshot.docs[0].data();
+        const couponId = querySnapshot.docs[0].id;
+        
+        if (couponData.usageLimit && (couponData.usageCount || 0) >= couponData.usageLimit) {
+            toast.error('Usage terminal reached');
+            return;
+        }
+
+        setAppliedCoupon({ id: couponId, ...couponData });
+        toast.success(`Protocol Verified: ${couponData.discountPercentage}% Off`);
+      } else {
+        toast.error('Invalid Protocol Code');
+      }
+    } catch (e) {
+      toast.error('Verification failure');
+    }
+  };
+
+  const finalPrice = React.useMemo(() => {
+    if (!appliedCoupon) return totalPrice;
+    return totalPrice * (1 - (appliedCoupon.discountPercentage / 100));
+  }, [totalPrice, appliedCoupon]);
 
   const handleCheckout = async () => {
     if (!user) {
@@ -29,46 +69,124 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
     }
 
     if (items.length === 0) return;
+    
+    if (!isPaymentStep) {
+      setIsPaymentStep(true);
+      return;
+    }
+
+    if (!momoNumber || momoNumber.length < 10) {
+      toast.error('Invalid Protocol: Mobile Money Number Required');
+      return;
+    }
 
     setIsOrdering(true);
+    const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
+
     try {
       const referralId = sessionStorage.getItem('last_referral_id');
-      const orderData = {
-        customerId: user.uid,
-        customerName: user.displayName,
-        items: items.map(item => ({
-          productId: item.id,
-          name: item.name,
-          gsm: item.gsm,
-          color: item.color,
-          size: item.size,
-          price: item.price,
-          quantity: item.quantity
-        })),
-        totalAmount: totalPrice,
-        depositAmount: totalPrice * 0.5,
-        status: 'pending',
-        referralAgentId: referralId || null,
-        createdAt: serverTimestamp()
+      const depositAmount = finalPrice * 0.5;
+
+      const config = {
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        email: user?.email || 'customer@kingsclothing.brand',
+        amount: Math.round(depositAmount * 100), // convert to pesewas
+        currency: 'GHS',
+        metadata: {
+          custom_fields: [
+            {
+              display_name: "Cart Details",
+              variable_name: "cart_details",
+              value: items.map(i => `${i.name} (x${i.quantity})`).join(', ')
+            },
+            {
+              display_name: "Coupon Code",
+              variable_name: "coupon_code",
+              value: appliedCoupon?.code || "NONE"
+            },
+            {
+              display_name: "Momo Number",
+              variable_name: "momo_number",
+              value: momoNumber
+            },
+            {
+              display_name: "Provider",
+              variable_name: "provider",
+              value: momoProvider
+            }
+          ]
+        },
+        callback: async (response: any) => {
+          const orderData = {
+            customerId: user.uid,
+            customerName: user.displayName,
+            customerEmail: user.email,
+            items: items.map(item => ({
+              productId: item.id,
+              name: item.name,
+              gsm: item.gsm,
+              color: item.color,
+              size: item.size,
+              price: item.price,
+              quantity: item.quantity
+            })),
+            totalAmount: finalPrice,
+            depositAmount: depositAmount,
+            discountApplied: totalPrice - finalPrice,
+            appliedCouponCode: appliedCoupon?.code || null,
+            status: 'pending',
+            paymentStatus: 'paid',
+            paystackReference: response.reference,
+            momoNumber: momoNumber,
+            momoProvider: momoProvider,
+            referralAgentId: referralId || null,
+            createdAt: serverTimestamp()
+          };
+
+          try {
+            const orderRef = doc(collection(db, 'orders'));
+            const orderId = orderRef.id;
+
+            await runTransaction(db, async (transaction) => {
+              transaction.set(orderRef, orderData);
+              
+              // 2. Increment salesCount for each product to track trending data
+              items.forEach(item => {
+                const productRef = doc(db, 'products', item.id);
+                transaction.update(productRef, {
+                  salesCount: increment(item.quantity)
+                });
+              });
+
+              if (appliedCoupon) {
+                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+                  usageCount: increment(1)
+                });
+              }
+            });
+
+            clearCart();
+            toast.dismiss(loadingToast);
+            toast.success('Capital Asset Secured');
+            navigate(`/order/${orderId}`);
+            onClose();
+          } catch (error) {
+            handleFirestoreError(error, OperationType.CREATE, 'orders');
+          }
+        },
+        onClose: () => {
+          setIsOrdering(false);
+          toast.dismiss(loadingToast);
+          toast.error('Transaction Terminated by User');
+        }
       };
 
-      const docRef = await addDoc(collection(db, 'orders'), orderData);
-      
-      // Increment salesCount for each product to track trending data
-      const updatePromises = items.map(item => 
-        updateDoc(doc(db, 'products', item.id), {
-          salesCount: increment(item.quantity)
-        })
-      );
-      await Promise.all(updatePromises);
+      const handler = (window as any).PaystackPop.setup(config);
+      handler.openIframe();
 
-      clearCart();
-      toast.success('Order Successfully Logged');
-      navigate(`/order/${docRef.id}`);
-      onClose();
     } catch (error: any) {
+      toast.dismiss(loadingToast);
       toast.error('Deployment Failed: ' + error.message);
-    } finally {
       setIsOrdering(false);
     }
   };
@@ -105,95 +223,200 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-              {items.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center space-y-6 opacity-20">
-                  <ShoppingBag className="w-16 h-16" strokeWidth={1} />
-                  <p className="text-[10px] font-black uppercase tracking-[0.4em]">Empty Ledger</p>
-                </div>
-              ) : (
-                <div className="space-y-8">
-                  {items.map((item) => (
-                    <motion.div 
-                      layout
-                      key={item.cartId}
-                      className="flex items-start space-x-6 group"
+              <AnimatePresence mode="wait">
+                {!isPaymentStep ? (
+                  <motion.div
+                    key="cart-items"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="space-y-8"
+                  >
+                    {items.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center space-y-6 opacity-20 py-20">
+                        <ShoppingBag className="w-16 h-16" strokeWidth={1} />
+                        <p className="text-[10px] font-black uppercase tracking-[0.4em]">Empty Ledger</p>
+                      </div>
+                    ) : (
+                      items.map((item) => (
+                        <motion.div 
+                          layout
+                          key={item.cartId}
+                          className="flex items-start space-x-6 group"
+                        >
+                          <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
+                            <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
+                          </div>
+                          <div className="flex-1 space-y-2">
+                            <div className="flex justify-between items-start">
+                              <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
+                              <button 
+                                onClick={() => removeItem(item.cartId)}
+                                className="p-1 text-white/10 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="flex flex-col space-y-1">
+                              <div className="flex items-center space-x-2">
+                                <ShieldCheck className="w-3 h-3 text-accent" />
+                                <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
+                              </div>
+                              <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
+                                {item.color} • {item.size}
+                              </p>
+                            </div>
+                            <div className="flex items-center justify-between pt-4">
+                              <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
+                                <button 
+                                  onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
+                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                >
+                                  -
+                                </button>
+                                <span className="px-4 text-[11px] font-mono font-black">{item.quantity}</span>
+                                <button 
+                                  onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
+                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                >
+                                  +
+                                </button>
+                              </div>
+                              <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))
+                    )}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="payment-step"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    className="space-y-12"
+                  >
+                    <button 
+                      onClick={() => setIsPaymentStep(false)}
+                      className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
                     >
-                      <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
-                        <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Back to Ledger</span>
+                    </button>
+
+                    <div className="space-y-4">
+                      <div className="flex items-center space-x-3 mb-2">
+                        <ShieldCheck className="w-6 h-6 text-accent" />
+                        <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white leading-none">MoMo <br/> Injection</h3>
                       </div>
-                      <div className="flex-1 space-y-2">
-                        <div className="flex justify-between items-start">
-                          <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
-                          <button 
-                            onClick={() => removeItem(item.cartId)}
-                            className="p-1 text-white/10 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <div className="flex flex-col space-y-1">
-                          <div className="flex items-center space-x-2">
-                            <ShieldCheck className="w-3 h-3 text-accent" />
-                            <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
-                          </div>
-                          <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
-                            {item.color} • {item.size}
-                          </p>
-                        </div>
-                        <div className="flex items-center justify-between pt-4">
-                          <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
-                            <button 
-                              onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
-                              className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Deploy Secure Network Protocol</p>
+                    </div>
+
+                    <div className="space-y-10">
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">Network Provider</label>
+                        <div className="grid grid-cols-3 gap-4">
+                          {[
+                            { id: 'mtn', label: 'MTN' },
+                            { id: 'telecel', label: 'Telecel' },
+                            { id: 'airteltigo', label: 'AT' }
+                          ].map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => setMomoProvider(p.id as any)}
+                              className={cn(
+                                "relative py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest",
+                                momoProvider === p.id 
+                                  ? "border-accent bg-accent/10 text-white" 
+                                  : "border-white/5 bg-white/5 text-white/40 hover:border-white/10"
+                              )}
                             >
-                              -
+                              {p.label}
                             </button>
-                            <span className="px-4 text-[11px] font-mono font-black">{item.quantity}</span>
-                            <button 
-                              onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
-                              className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
-                            >
-                              +
-                            </button>
-                          </div>
-                          <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
+                          ))}
                         </div>
                       </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
+
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">MoMo Number</label>
+                        <div className="relative group">
+                          <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                          <input 
+                            type="tel"
+                            placeholder="0XX XXX XXXX"
+                            value={momoNumber}
+                            onChange={(e) => setMomoNumber(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-14 text-sm font-black text-white outline-none focus:border-accent transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
+                      <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Kingdom Assets</span>
+                        <span className="text-[11px] font-black text-white">{items.length} Units</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Deposit</span>
+                        <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice * 0.5)}</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {items.length > 0 && (
-              <div className="p-8 border-t border-white/10 bg-black/40 backdrop-blur-xl">
-                <div className="flex justify-between items-center mb-8">
+              <div className="p-8 border-t border-white/10 bg-black/40 backdrop-blur-xl sticky bottom-0 space-y-8">
+                {/* Coupon Entry */}
+                <div className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-2xl p-2 focus-within:border-accent/40 transition-all">
+                  <input 
+                    type="text"
+                    placeholder="LOYALTY PROTOCOL"
+                    value={couponCode}
+                    onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                    className="flex-1 bg-transparent border-none outline-none text-[10px] font-black uppercase tracking-widest px-4 text-white placeholder:text-white/20"
+                  />
+                  <button 
+                    onClick={handleApplyCoupon}
+                    className="bg-accent text-black px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all"
+                  >
+                    Verify
+                  </button>
+                </div>
+
+                <div className="flex justify-between items-end">
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-white/20">Kingdom Total</p>
-                    <p className="text-3xl font-display font-black text-white italic tracking-tighter">{formatGHC(totalPrice)}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Total Value</p>
+                    <div className="flex items-baseline gap-3">
+                      <p className="text-3xl font-display font-black tracking-tighter italic">{formatGHC(finalPrice)}</p>
+                      {appliedCoupon && (
+                        <p className="text-sm font-mono font-bold text-white/20 line-through">{formatGHC(totalPrice)}</p>
+                      )}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-accent mb-1">50% Deposit Req.</p>
-                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(totalPrice * 0.5)}</p>
+                  <div className="text-right space-y-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Required Deposit</p>
+                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(finalPrice * 0.5)}</p>
                   </div>
                 </div>
+
                 <button
                   onClick={handleCheckout}
                   disabled={isOrdering}
                   className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl active:scale-95 disabled:opacity-50"
                 >
                   {isOrdering ? (
-                    <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                    <RefreshCw className="w-5 h-5 animate-spin" />
                   ) : (
                     <>
                       <Zap className="w-5 h-5" />
-                      <span>Authorize Production</span>
+                      <span>{isPaymentStep ? 'Initialize Secure Build' : 'Authorize Production'}</span>
                     </>
                   )}
                 </button>
-                <p className="mt-6 text-center text-[8px] font-black uppercase tracking-[0.2em] text-white/20 italic">
-                  Remaining 50% payable upon physical delivery.
-                </p>
               </div>
             )}
           </motion.div>

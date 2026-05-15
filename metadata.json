@@ -2,5 +2,5 @@
   "name": "Kings Clothing Brand",
   "description": "An editorial-grade streetwear portal. Establish authority with premium Ghanaian craftsmanship, a secure 50/50 payment blueprint, and an AI-powered design ecosystem featuring cinematic Veo promotional video generation.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

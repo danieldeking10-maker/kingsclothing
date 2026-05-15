@@ -2,16 +2,16 @@
   "entities": {
     "Agent": {
       "title": "Agent",
-      "description": "User profile with agent capabilities and tracking",
+      "description": "A user profile representing a brand agent or customer.",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "agent", "admin"] },
+        "referredBy": { "type": ["string", "null"] },
         "momoNumber": { "type": "string" },
         "referralCode": { "type": "string" },
-        "referredBy": { "type": "string", "description": "UID of the agent who referred this user" },
-        "role": { "type": "string", "enum": ["user", "agent", "admin"] },
         "stats": {
           "type": "object",
           "properties": {
@@ -22,100 +22,96 @@
         },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "email", "role"]
+      "required": ["uid", "email", "role", "createdAt"]
     },
     "Product": {
       "title": "Product",
-      "description": "Apparel product items in the shop",
+      "description": "An apparel item in the store.",
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "category": { "type": "string" },
         "description": { "type": "string" },
+        "category": { "type": "string" },
         "basePrice": { "type": "number" },
-        "gsmPrices": { "type": "object" },
-        "colors": { "type": "array", "items": { "type": "string" } },
-        "allowedColors": { "type": "array", "items": { "type": "string" } },
-        "colorStudioImages": { "type": "object" },
-        "colorBlueprints": { "type": "object" },
-        "colorImages": { "type": "object" },
-        "sizes": { "type": "array", "items": { "type": "string" } },
-        "mockupImage": { "type": "string" },
-        "studioImage": { "type": "string" },
-        "blueprintImage": { "type": "string" },
-        "agentId": { "type": "string" },
-        "agentName": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "status": { "type": "string", "enum": ["pending", "approved", "archived"] },
+        "agentId": { "type": ["string", "null"] },
+        "salesCount": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["name", "category", "basePrice", "status"]
+      }
     },
     "Order": {
       "title": "Order",
-      "description": "Customer order records",
+      "description": "A customer purchase record.",
       "type": "object",
       "properties": {
-        "customerId": { "type": "string" },
+        "customerId": { "type": ["string", "null"] },
         "customerName": { "type": "string" },
-        "customerPhone": { "type": "string" },
-        "items": { "type": "array" },
+        "customerEmail": { "type": "string" },
         "totalAmount": { "type": "number" },
         "depositAmount": { "type": "number" },
-        "remainingAmount": { "type": "number" },
-        "momoReference": { "type": "string" },
-        "status": { "type": "string", "enum": ["pending", "partially_paid", "completed", "cancelled"] },
-        "agentId": { "type": "string" },
+        "status": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "paystackReference": { "type": "string" },
+        "momoNumber": { "type": "string" },
+        "momoProvider": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
-      },
-      "required": ["totalAmount", "status", "createdAt"]
+      }
     },
-    "Review": {
-      "title": "Review",
-      "description": "User feedback on products",
+    "Promotion": {
+      "title": "Promotion",
+      "description": "An active site-wide discount or campaign.",
       "type": "object",
       "properties": {
-        "userId": { "type": "string" },
-        "userName": { "type": "string" },
-        "rating": { "type": "number" },
-        "comment": { "type": "string" },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "discountPercentage": { "type": "number" },
+        "message": { "type": "string" },
+        "startDate": { "type": "string", "format": "date-time" },
+        "endDate": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "rating", "comment"]
+      "required": ["name", "active", "discountPercentage", "createdAt"]
     },
-    "Payout": {
-      "title": "Payout",
-      "description": "Payment records to agents",
+    "Coupon": {
+      "title": "Coupon",
+      "description": "A reusable or single-use discount code.",
       "type": "object",
       "properties": {
-        "agentId": { "type": "string" },
-        "amount": { "type": "number" },
-        "status": { "type": "string", "enum": ["pending", "processed", "failed"] },
-        "method": { "type": "string" },
+        "code": { "type": "string" },
+        "discountPercentage": { "type": "number" },
+        "usageLimit": { "type": ["number", "null"] },
+        "usageCount": { "type": "number" },
+        "expiryDate": { "type": ["string", "null"], "format": "date-time" },
+        "active": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["agentId", "amount", "status"]
+      "required": ["code", "discountPercentage", "usageCount", "active", "createdAt"]
     }
   },
   "firestore": {
     "/agents/{agentId}": {
       "schema": "Agent",
-      "description": "Agent profiles indexed by UID"
+      "description": "User profiles and agent data."
     },
     "/products/{productId}": {
       "schema": "Product",
-      "description": "All products including agent designs"
-    },
-    "/products/{productId}/reviews/{reviewId}": {
-      "schema": "Review",
-      "description": "Reviews for a specific product"
+      "description": "Product catalog."
     },
     "/orders/{orderId}": {
       "schema": "Order",
-      "description": "Customer orders"
+      "description": "Customer orders."
     },
-    "/payouts/{payoutId}": {
-      "schema": "Payout",
-      "description": "Agent payout records"
+    "/promotions/{promoId}": {
+      "schema": "Promotion",
+      "description": "Active site-wide promotions."
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Available discount coupons."
+    },
+    "/system_logs/{logId}": {
+      "schema": { "type": "object", "properties": {} },
+      "description": "Application error and event logs."
     }
   }
 }

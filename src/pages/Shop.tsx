@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { SlidersHorizontal, ArrowUpDown, RefreshCw, ChevronRight, Zap, Trash2, Edit3 } from 'lucide-react';
-import { collection, query, where, onSnapshot, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, deleteDoc, updateDoc, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { CATEGORIES, PRICING } from '@/src/constants';
 import { formatGHC, cn } from '@/src/lib/utils';
@@ -56,7 +56,11 @@ export function ShopPage() {
 
   useEffect(() => {
     // Fetch approved products
-    const q = query(collection(db, 'products'), where('status', '==', 'approved'));
+    const q = query(
+      collection(db, 'products'), 
+      where('status', '==', 'approved'),
+      limit(40)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs
         .map(doc => ({ id: doc.id, ...doc.data() }))

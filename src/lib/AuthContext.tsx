@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 interface AuthContextType {
@@ -9,6 +9,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   isBrandOwner: boolean;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -17,6 +18,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAdmin: false,
   isBrandOwner: false,
+  refreshProfile: async () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -28,30 +30,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const BRAND_OWNER_EMAILS = ['kingsclothingbrand7@gmail.com', 'danieldeking10@gmail.com'];
 
+  const refreshProfile = async () => {
+    if (!auth.currentUser) {
+      setAgentProfile(null);
+      return;
+    }
+    const docRef = doc(db, 'agents', auth.currentUser.uid);
+    try {
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setAgentProfile(docSnap.data());
+      }
+    } catch (error) {
+      console.error("Error refreshing profile:", error);
+    }
+  };
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeProfile: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user);
+      
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (user) {
+        // Use onSnapshot for real-time profile updates
         const docRef = doc(db, 'agents', user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setAgentProfile(docSnap.data());
-        }
+        unsubscribeProfile = onSnapshot(docRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setAgentProfile(docSnap.data());
+          } else {
+            setAgentProfile(null);
+          }
+          setLoading(false);
+        }, (error) => {
+          console.error("AuthContext Profile Fetch Error:", error);
+          setAgentProfile(null);
+          setLoading(false);
+        });
       } else {
         setAgentProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   const value = {
     user,
     agentProfile,
     loading,
-    isAdmin: agentProfile?.role === 'admin' || (user?.email && BRAND_OWNER_EMAILS.includes(user.email)),
-    isBrandOwner: user?.email && BRAND_OWNER_EMAILS.includes(user.email),
+    isAdmin: !!(agentProfile?.role === 'admin' || (user?.email && BRAND_OWNER_EMAILS.includes(user.email))),
+    isBrandOwner: !!(user?.email && BRAND_OWNER_EMAILS.includes(user.email)),
+    refreshProfile
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

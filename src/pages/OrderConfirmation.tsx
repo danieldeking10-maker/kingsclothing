@@ -20,7 +20,7 @@ import {
   ChevronRight,
   RefreshCw
 } from 'lucide-react';
-import { doc, onSnapshot, updateDoc, getDoc, increment } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { usePaystackPayment } from 'react-paystack';
@@ -161,31 +161,42 @@ export function OrderConfirmationPage() {
     
     setIsConfirming(true);
     try {
-      // Update Order Status
-      await updateDoc(doc(db, 'orders', id), {
-        status: 'processing',
-        paymentConfirmedAt: new Date().toISOString()
-      });
-
-      // Update Agent Profile Stats (The person who made the purchase)
-      if (order.customerId) {
-        const agentDoc = await getDoc(doc(db, 'agents', order.customerId));
-        const agentData = agentDoc.data();
+      await runTransaction(db, async (transaction) => {
+        const orderRef = doc(db, 'orders', id);
+        const orderSnap = await transaction.get(orderRef);
         
-        const agentRef = doc(db, 'agents', order.customerId);
-        await updateDoc(agentRef, {
-          'stats.totalSales': increment(order.totalAmount),
+        if (!orderSnap.exists()) throw new Error("Order document does not exist");
+        const orderData = orderSnap.data();
+        if (orderData.status !== 'pending') throw new Error("Order is no longer pending");
+
+        // 1. Update Order Status
+        transaction.update(orderRef, {
+          status: 'processing',
+          paymentConfirmedAt: new Date().toISOString()
         });
 
-        // Credit Referrer if applicable (10% commission on total sales)
-        if (agentData?.referredBy) {
-          const referrerRef = doc(db, 'agents', agentData.referredBy);
-          const commissionAmount = order.totalAmount * 0.10; // 10% commission
-          await updateDoc(referrerRef, {
-            'stats.commissionEarned': increment(commissionAmount)
-          });
+        // 2. Update Agent Profile Stats (The person who made the purchase)
+        if (orderData.customerId) {
+          const agentRef = doc(db, 'agents', orderData.customerId);
+          const agentSnap = await transaction.get(agentRef);
+          
+          if (agentSnap.exists()) {
+            const agentData = agentSnap.data();
+            transaction.update(agentRef, {
+              'stats.totalSales': increment(orderData.totalAmount),
+            });
+
+            // 3. Credit Referrer if applicable (10% commission on total sales)
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              const commissionAmount = orderData.totalAmount * 0.10;
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(commissionAmount)
+              });
+            }
+          }
         }
-      }
+      });
 
       toast.success('Payment confirmation broadcasted!');
     } catch (error) {
@@ -201,38 +212,50 @@ export function OrderConfirmationPage() {
     
     setIsCancelling(true);
     try {
-      const wasConfirmed = order.status !== 'pending';
-      await updateDoc(doc(db, 'orders', id), {
-        status: 'cancelled',
-        cancelledAt: new Date().toISOString()
-      });
+      await runTransaction(db, async (transaction) => {
+        const orderRef = doc(db, 'orders', id);
+        const orderSnap = await transaction.get(orderRef);
+        
+        if (!orderSnap.exists()) throw new Error("Order does not exist");
+        const orderData = orderSnap.data();
+        const wasConfirmed = orderData.status !== 'pending';
 
-      // Deduct from salesCount for each product to maintain accurate trending data
-      const salesUpdatePromises = order.items.map((item: any) => 
-        updateDoc(doc(db, 'products', item.productId), {
-          salesCount: increment(-item.quantity)
-        })
-      );
-      await Promise.all(salesUpdatePromises);
-
-      // Deduct from stats if it was previously confirmed (incremented)
-      if (wasConfirmed && order.customerId) {
-        const agentRef = doc(db, 'agents', order.customerId);
-        await updateDoc(agentRef, {
-          'stats.totalSales': increment(-order.totalAmount),
+        // 1. Update Order Status
+        transaction.update(orderRef, {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString()
         });
 
-        // Also reverse commission if referredBy exists
-        const agentDoc = await getDoc(agentRef);
-        const agentData = agentDoc.data();
-        if (agentData?.referredBy) {
-          const referrerRef = doc(db, 'agents', agentData.referredBy);
-          const commissionAmount = order.totalAmount * 0.10;
-          await updateDoc(referrerRef, {
-            'stats.commissionEarned': increment(-commissionAmount)
+        // 2. Deduct from salesCount for each product
+        orderData.items.forEach((item: any) => {
+          const productRef = doc(db, 'products', item.productId);
+          transaction.update(productRef, {
+            salesCount: increment(-item.quantity)
           });
+        });
+
+        // 3. Deduct from stats if it was previously confirmed
+        if (wasConfirmed && orderData.customerId) {
+          const agentRef = doc(db, 'agents', orderData.customerId);
+          const agentSnap = await transaction.get(agentRef);
+          
+          if (agentSnap.exists()) {
+            const agentData = agentSnap.data();
+            transaction.update(agentRef, {
+              'stats.totalSales': increment(-orderData.totalAmount),
+            });
+
+            // 4. Reverse commission if referredBy exists
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              const commissionAmount = orderData.totalAmount * 0.10;
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(-commissionAmount)
+              });
+            }
+          }
         }
-      }
+      });
 
       toast.success('Order Cancelled Successfully');
       setIsCancelDialogOpen(false);

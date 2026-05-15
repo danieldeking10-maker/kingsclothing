@@ -23,7 +23,6 @@ import {
   Sparkles,
   ShieldCheck,
   Grid3X3,
-  Maximize2,
   Trash2,
   Twitter,
   MessageCircle,
@@ -37,7 +36,7 @@ import {
 import { toast } from 'react-hot-toast';
 import React from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, increment } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, increment, runTransaction, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { GSM } from '../types';
@@ -165,7 +164,7 @@ const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpd
               view === 'blueprint' ? "bg-accent border-accent text-black" : "bg-black/40 border-white/10 text-white/40"
             )}
           >
-            <Maximize2 className="w-3 h-3" />
+            <Layers className="w-3 h-3" />
           </button>
         </div>
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-6 pt-12">
@@ -349,11 +348,29 @@ export function AgentPortal() {
   const [allAgents, setAllAgents] = useState<any[]>([]);
   const [allDesigns, setAllDesigns] = useState<any[]>([]);
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
+  const [promotions, setPromotions] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [newPromotion, setNewPromotion] = useState({
+    name: '',
+    discountPercentage: 0,
+    active: true,
+    message: ''
+  });
+  const [newCoupon, setNewCoupon] = useState({
+    code: '',
+    discountPercentage: 0,
+    usageLimit: null as number | null,
+    active: true
+  });
   const [referralCode, setReferralCode] = useState(agentProfile?.referralCode || '');
+  const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
+  const [momoProvider, setMomoProvider] = useState<'mtn' | 'telecel' | 'airteltigo'>(agentProfile?.momoProvider || 'mtn');
 
   // Sync state with profile data
   useEffect(() => {
     if (agentProfile?.referralCode) setReferralCode(agentProfile.referralCode);
+    if (agentProfile?.momoNumber) setMomoNumber(agentProfile.momoNumber);
+    if (agentProfile?.momoProvider) setMomoProvider(agentProfile.momoProvider);
   }, [agentProfile]);
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -455,18 +472,64 @@ export function AgentPortal() {
     }
   };
 
+  const handleAddPromotion = async () => {
+    if (!newPromotion.name || !newPromotion.discountPercentage) {
+      toast.error('Identity of promotion is required');
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'promotions'), {
+        ...newPromotion,
+        createdAt: serverTimestamp()
+      });
+      toast.success('Promotion Injected');
+      setNewPromotion({ name: '', discountPercentage: 0, active: true, message: '' });
+    } catch (e: any) {
+      toast.error('Promotion failed: ' + e.message);
+    }
+  };
+
+  const handleAddCoupon = async () => {
+    if (!newCoupon.code || !newCoupon.discountPercentage) {
+      toast.error('Coupon blueprint is incomplete');
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'coupons'), {
+        ...newCoupon,
+        code: newCoupon.code.toUpperCase(),
+        usageCount: 0,
+        createdAt: serverTimestamp()
+      });
+      toast.success('Coupon Generated');
+      setNewCoupon({ code: '', discountPercentage: 0, usageLimit: null, active: true });
+    } catch (e: any) {
+      toast.error('Coupon failed: ' + e.message);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
     
     // Fetch user's designs
-    const qDesigns = query(collection(db, 'products'), where('agentId', '==', user.uid));
+    const qDesigns = query(
+      collection(db, 'products'), 
+      where('agentId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
     const unsubscribeDesigns = onSnapshot(qDesigns, (snapshot) => {
       const designs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyDesigns(designs);
     });
 
     // Fetch user's orders
-    const qOrders = query(collection(db, 'orders'), where('customerId', '==', user.uid));
+    const qOrders = query(
+      collection(db, 'orders'), 
+      where('customerId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
     const unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
       const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyOrders(orders);
@@ -518,6 +581,9 @@ export function AgentPortal() {
     let unsubscribeAllAgents = () => {};
     let unsubscribeAllDesigns = () => {};
     let unsubscribeLogs = () => {};
+    let unsubscribePromotions = () => {};
+    let unsubscribeCoupons = () => {};
+
     if (isBrandOwner) {
       const agentsQuery = query(collection(db, 'agents'));
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
@@ -529,13 +595,23 @@ export function AgentPortal() {
         setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
 
-      const logsQuery = query(collection(db, 'system_logs'));
+      const promotionsQuery = query(collection(db, 'promotions'));
+      unsubscribePromotions = onSnapshot(promotionsQuery, (snapshot) => {
+        setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      const couponsQuery = query(collection(db, 'coupons'));
+      unsubscribeCoupons = onSnapshot(couponsQuery, (snapshot) => {
+        setCoupons(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+
+      const logsQuery = query(
+        collection(db, 'system_logs'),
+        orderBy('timestamp', 'desc'),
+        limit(100)
+      );
       unsubscribeLogs = onSnapshot(logsQuery, (snapshot) => {
-        setSystemLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)).sort((a: any, b: any) => {
-          const tA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : 0;
-          const tB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : 0;
-          return tB - tA;
-        }));
+        setSystemLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
       });
     }
 
@@ -549,6 +625,8 @@ export function AgentPortal() {
       unsubscribeAllDesigns();
       unsubscribeAllOrders();
       unsubscribeLogs();
+      unsubscribePromotions();
+      unsubscribeCoupons();
     };
   }, [user, isBrandOwner]);
 
@@ -853,11 +931,47 @@ export function AgentPortal() {
     }
   };
 
+  const handleRequestPayout = async () => {
+    if (!user || totalCommission <= 0) return;
+    
+    // Calculate current balance
+    const totalPaid = payouts.reduce((acc, p) => acc + (p.amount || 0), 0);
+    const balance = totalCommission - totalPaid;
+    
+    if (balance < 10) {
+      toast.error('Minimum withdrawal: 10 GHC');
+      return;
+    }
+
+    if (!agentProfile?.momoNumber) {
+      toast.error('Protocol Failure: Set disbursement number in Identity Config');
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'payouts'), {
+        agentId: user.uid,
+        agentName: agentProfile.name || user.displayName,
+        amount: Math.floor(balance),
+        status: 'Requested',
+        momoNumber: agentProfile.momoNumber,
+        momoProvider: agentProfile.momoProvider || 'mtn',
+        createdAt: serverTimestamp()
+      });
+      toast.success('Payout request transmitted to headquarters');
+    } catch (error: any) {
+      toast.error('Transmission failed: ' + error.message);
+    }
+  };
+
   const handleUpdateProfile = async () => {
     if (!user) return;
     try {
       await updateDoc(doc(db, 'agents', user.uid), {
-        referralCode: referralCode.toUpperCase().trim()
+        referralCode: referralCode.toUpperCase().trim(),
+        momoNumber: momoNumber.trim(),
+        momoProvider: momoProvider,
+        updatedAt: serverTimestamp()
       });
       toast.success('Agent profile updated');
     } catch (error) {
@@ -868,64 +982,71 @@ export function AgentPortal() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!isBrandOwner) return;
     try {
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
-      if (!orderSnap.exists()) return;
-      const orderData = orderSnap.data();
-      const oldStatus = orderData.status;
+      await runTransaction(db, async (transaction) => {
+        const orderRef = doc(db, 'orders', orderId);
+        const orderSnap = await transaction.get(orderRef);
+        if (!orderSnap.exists()) throw new Error("Order does not exist");
+        
+        const orderData = orderSnap.data();
+        const oldStatus = orderData.status;
 
-      await updateDoc(orderRef, {
-        status: newStatus,
-        updatedAt: serverTimestamp()
+        transaction.update(orderRef, {
+          status: newStatus,
+          updatedAt: serverTimestamp()
+        });
+
+        // Handle Stats based on status transition
+        if (orderData.customerId) {
+          const agentRef = doc(db, 'agents', orderData.customerId);
+          
+          // 1. Pending -> Processing (Confirmed)
+          if (oldStatus === 'pending' && newStatus === 'processing') {
+            transaction.update(agentRef, {
+              'stats.totalSales': increment(orderData.totalAmount)
+            });
+            
+            // Credit Referrer
+            const agentSnap = await transaction.get(agentRef);
+            if (agentSnap.exists()) {
+              const agentData = agentSnap.data();
+              if (agentData?.referredBy) {
+                const referrerRef = doc(db, 'agents', agentData.referredBy);
+                transaction.update(referrerRef, {
+                  'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
+                });
+              }
+            }
+          }
+          
+          // 2. Processing+ -> Cancelled (Deduct)
+          if (oldStatus !== 'pending' && oldStatus !== 'cancelled' && newStatus === 'cancelled') {
+            // Deduct from salesCount for each product
+            const items = orderData.items || [];
+            items.forEach((item: any) => {
+              const productRef = doc(db, 'products', item.productId);
+              transaction.update(productRef, {
+                salesCount: increment(-item.quantity)
+              });
+            });
+
+            transaction.update(agentRef, {
+              'stats.totalSales': increment(-orderData.totalAmount)
+            });
+            
+            // Reverse Referrer Commission
+            const agentSnap = await transaction.get(agentRef);
+            if (agentSnap.exists()) {
+              const agentData = agentSnap.data();
+              if (agentData?.referredBy) {
+                const referrerRef = doc(db, 'agents', agentData.referredBy);
+                transaction.update(referrerRef, {
+                  'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
+                });
+              }
+            }
+          }
+        }
       });
-
-      // Handle Stats based on status transition
-      if (orderData.customerId) {
-        const agentRef = doc(db, 'agents', orderData.customerId);
-        
-        // 1. Pending -> Processing (Confirmed)
-        if (oldStatus === 'pending' && newStatus === 'processing') {
-          await updateDoc(agentRef, {
-            'stats.totalSales': increment(orderData.totalAmount)
-          });
-          
-          // Credit Referrer
-          const agentDoc = await getDoc(agentRef);
-          const agentData = agentDoc.data();
-          if (agentData?.referredBy) {
-            const referrerRef = doc(db, 'agents', agentData.referredBy);
-            await updateDoc(referrerRef, {
-              'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
-            });
-          }
-        }
-        
-        // 2. Processing+ -> Cancelled (Deduct)
-        if (oldStatus !== 'pending' && oldStatus !== 'cancelled' && newStatus === 'cancelled') {
-          // Deduct from salesCount for each product to maintain accurate trending data
-          const items = orderData.items || [];
-          const salesUpdatePromises = items.map((item: any) => 
-            updateDoc(doc(db, 'products', item.productId), {
-              salesCount: increment(-item.quantity)
-            })
-          );
-          await Promise.all(salesUpdatePromises);
-
-          await updateDoc(agentRef, {
-            'stats.totalSales': increment(-orderData.totalAmount)
-          });
-          
-          // Reverse Referrer Commission
-          const agentDoc = await getDoc(agentRef);
-          const agentData = agentDoc.data();
-          if (agentData?.referredBy) {
-            const referrerRef = doc(db, 'agents', agentData.referredBy);
-            await updateDoc(referrerRef, {
-              'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
-            });
-          }
-        }
-      }
 
       toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
     } catch (error: any) {
@@ -1105,8 +1226,29 @@ export function AgentPortal() {
     }
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black uppercase tracking-widest italic animate-pulse">Loading Identity...</div>;
-  if (!user) return <div className="h-screen flex flex-col items-center justify-center space-y-4">
+  const isInitiallyLoading = loading && !agentProfile;
+
+  if (isInitiallyLoading) return (
+    <div className="h-screen bg-background flex flex-col items-center justify-center space-y-8 p-6">
+      <div className="w-24 h-24 bg-accent/10 rounded-[2rem] border border-accent/20 flex items-center justify-center animate-pulse">
+        <ShieldCheck className="w-10 h-10 text-accent/40" />
+      </div>
+      <div className="space-y-3 text-center max-w-xs">
+        <h2 className="text-xl font-display font-black uppercase italic tracking-tighter text-white animate-pulse">Synchronizing Identity</h2>
+        <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Accessing King's Ledger and Authority Clearances...</p>
+      </div>
+      <div className="w-48 h-1 bg-white/5 rounded-full overflow-hidden">
+        <motion.div 
+          initial={{ x: "-100%" }}
+          animate={{ x: "100%" }}
+          transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+          className="w-1/2 h-full bg-accent"
+        />
+      </div>
+    </div>
+  );
+
+  if (!user && !loading) return <div className="h-screen flex flex-col items-center justify-center space-y-4">
     <p className="text-black/40 font-bold uppercase tracking-widest">Unauthorized Access</p>
     <Link to="/auth" className="bg-black text-white px-8 py-4 rounded-full font-black uppercase tracking-widest text-xs">Initialize Sign In</Link>
   </div>;
@@ -1926,7 +2068,7 @@ export function AgentPortal() {
                              <img 
                               src={ownerPreview} 
                               alt="Mockup" 
-                              className="w-full h-full object-cover transition-transform duration-700 group-hover/mockup:scale-110" 
+                              className="w-full h-full object-cover transition-transform duration-700" 
                               referrerPolicy="no-referrer"
                             />
                           ) : (
@@ -1943,7 +2085,7 @@ export function AgentPortal() {
                              <img 
                                src={ownerStudioPreview} 
                                alt="Studio" 
-                               className="w-full h-full object-cover transition-transform duration-700 group-hover/studio:scale-110" 
+                               className="w-full h-full object-cover transition-transform duration-700" 
                                referrerPolicy="no-referrer"
                              />
                           ) : (
@@ -1960,7 +2102,7 @@ export function AgentPortal() {
                              <img 
                                src={ownerBlueprintPreview} 
                                alt="Tech" 
-                               className="w-full h-full object-cover transition-transform duration-700 group-hover/blueprint:scale-110" 
+                               className="w-full h-full object-cover transition-transform duration-700" 
                                referrerPolicy="no-referrer"
                              />
                           ) : (
@@ -2060,7 +2202,7 @@ export function AgentPortal() {
                                         {[
                                           { type: 'mockupImage', icon: Grid3X3, label: 'B' },
                                           { type: 'studioImage', icon: Sparkles, label: 'S' },
-                                          { type: 'blueprintImage', icon: Maximize2, label: 'T' }
+                                          { type: 'blueprintImage', icon: Layers, label: 'T' }
                                         ].map((asset) => (
                                            <div key={asset.type} className="relative group/asset">
                                               <button 
@@ -2428,6 +2570,175 @@ export function AgentPortal() {
               </div>
             </div>
           )}
+
+            {/* Royal Incentives: Promotions & Coupons (Brand Owner Only) */}
+            {isBrandOwner && (
+               <section className="bg-white/5 border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 overflow-hidden shadow-2xl transition-all hover:bg-white/[0.07]">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-4">
+                     <div className="flex items-center space-x-6">
+                        <div className="bg-accent/20 p-5 rounded-3xl border border-accent/20">
+                           <Star className="w-10 h-10 text-accent animate-pulse" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Incentive Authority</h2>
+                           <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Managing Promotions and Loyal Transitions</p>
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                     {/* Promotions Management */}
+                     <div className="space-y-8 p-8 bg-black/40 rounded-[2.5rem] border border-white/5">
+                        <div className="flex items-center justify-between">
+                           <h3 className="text-xl font-display font-black uppercase italic tracking-tight text-white flex items-center gap-3">
+                              <Zap className="w-5 h-5 text-accent" />
+                              Global Promotions
+                           </h3>
+                        </div>
+                        
+                        <div className="space-y-4">
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <input 
+                                 type="text"
+                                 placeholder="Campaign Name (e.g., Summer Raid)"
+                                 value={newPromotion.name}
+                                 onChange={(e) => setNewPromotion({...newPromotion, name: e.target.value})}
+                                 className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold uppercase tracking-widest outline-none focus:border-accent"
+                              />
+                              <div className="relative">
+                                 <input 
+                                    type="number"
+                                    placeholder="Discount %"
+                                    value={newPromotion.discountPercentage || ''}
+                                    onChange={(e) => setNewPromotion({...newPromotion, discountPercentage: Number(e.target.value)})}
+                                    className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 pr-10 text-xs font-bold uppercase tracking-widest outline-none focus:border-accent"
+                                 />
+                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-accent">%</span>
+                              </div>
+                           </div>
+                           <textarea 
+                              placeholder="Promotional Message (Visible to Clients)"
+                              value={newPromotion.message}
+                              onChange={(e) => setNewPromotion({...newPromotion, message: e.target.value})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-medium outline-none focus:border-accent resize-none h-24"
+                           />
+                           <button 
+                              onClick={handleAddPromotion}
+                              className="w-full bg-accent text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-white transition-all active:scale-95 shadow-xl"
+                           >
+                              Inject Global Promotion
+                           </button>
+                        </div>
+
+                        <div className="space-y-3 pt-6 border-t border-white/5">
+                           {promotions.length === 0 ? (
+                              <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic text-center py-8">No Active Campaigns Detected</p>
+                           ) : (
+                              promotions.map((promo) => (
+                                 <div key={promo.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 group">
+                                    <div>
+                                       <p className="text-xs font-black uppercase tracking-widest text-white group-hover:text-accent transition-colors">{promo.name}</p>
+                                       <p className="text-[8px] font-black italic text-white/20 uppercase">{promo.discountPercentage}% Discount • {promo.active ? 'Active' : 'Inactive'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                       <button 
+                                          onClick={() => updateDoc(doc(db, 'promotions', promo.id), { active: !promo.active })}
+                                          className="text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white"
+                                       >
+                                          Toggle
+                                       </button>
+                                       <button 
+                                          onClick={() => deleteDoc(doc(db, 'promotions', promo.id))}
+                                          className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500"
+                                       >
+                                          Nuke
+                                       </button>
+                                    </div>
+                                 </div>
+                              ))
+                           )}
+                        </div>
+                     </div>
+
+                     {/* Coupons Management */}
+                     <div className="space-y-8 p-8 bg-black/40 rounded-[2.5rem] border border-white/5">
+                        <div className="flex items-center justify-between">
+                           <h3 className="text-xl font-display font-black uppercase italic tracking-tight text-white flex items-center gap-3">
+                              <Star className="w-5 h-5 text-accent" />
+                              Loyalty Coupons
+                           </h3>
+                        </div>
+
+                        <div className="space-y-4">
+                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <input 
+                                 type="text"
+                                 placeholder="COUPON_CODE"
+                                 value={newCoupon.code}
+                                 onChange={(e) => setNewCoupon({...newCoupon, code: e.target.value.toUpperCase()})}
+                                 className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm font-black uppercase tracking-[0.2em] outline-none focus:border-accent text-accent"
+                              />
+                              <div className="relative">
+                                 <input 
+                                    type="number"
+                                    placeholder="Discount %"
+                                    value={newCoupon.discountPercentage || ''}
+                                    onChange={(e) => setNewCoupon({...newCoupon, discountPercentage: Number(e.target.value)})}
+                                    className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 pr-10 text-xs font-bold font-mono outline-none focus:border-accent"
+                                 />
+                                 <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-accent">%</span>
+                              </div>
+                           </div>
+                           <input 
+                              type="number"
+                              placeholder="Usage Limit (Null for Unlimited)"
+                              value={newCoupon.usageLimit || ''}
+                              onChange={(e) => setNewCoupon({...newCoupon, usageLimit: e.target.value ? Number(e.target.value) : null})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold uppercase tracking-widest outline-none focus:border-accent"
+                           />
+                           <button 
+                              onClick={handleAddCoupon}
+                              className="w-full bg-white text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-accent transition-all active:scale-95 shadow-xl"
+                           >
+                              Generate Loyalty Bond
+                           </button>
+                        </div>
+
+                        <div className="space-y-3 pt-6 border-t border-white/5 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                           {coupons.length === 0 ? (
+                              <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic text-center py-8">No Coupons Issued</p>
+                           ) : (
+                              coupons.map((coupon) => (
+                                 <div key={coupon.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 group">
+                                    <div>
+                                       <p className="text-xs font-black uppercase tracking-[0.2em] text-accent font-mono">{coupon.code}</p>
+                                       <p className="text-[8px] font-black italic text-white/20 uppercase">
+                                          {coupon.discountPercentage}% Discount • {coupon.usageCount} Used 
+                                          {coupon.usageLimit ? ` / ${coupon.usageLimit}` : ' (Unlimited)'}
+                                       </p>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                       <button 
+                                          onClick={() => updateDoc(doc(db, 'coupons', coupon.id), { active: !coupon.active })}
+                                          className="text-[9px] font-black uppercase tracking-widest text-white/40 hover:text-white"
+                                       >
+                                          {coupon.active ? 'Disable' : 'Enable'}
+                                       </button>
+                                       <button 
+                                          onClick={() => deleteDoc(doc(db, 'coupons', coupon.id))}
+                                          className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-500"
+                                       >
+                                          Purge
+                                       </button>
+                                    </div>
+                                 </div>
+                              ))
+                           )}
+                        </div>
+                     </div>
+                  </div>
+               </section>
+            )}
 
             {/* Fulfillment Ledger (Brand Owner Only) */}
             {isBrandOwner && (
@@ -3071,6 +3382,46 @@ export function AgentPortal() {
                         </div>
                      </div>
                   </div>
+
+                  <div className="space-y-4">
+                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-white/20 italic px-2 block">Royalty Disbursement Target (Number)</label>
+                     <div className="relative group">
+                        <input 
+                           type="tel" 
+                           value={momoNumber}
+                           onChange={(e) => setMomoNumber(e.target.value)}
+                           placeholder="0XX XXX XXXX" 
+                           className="w-full bg-black/60 border-2 border-white/5 rounded-2xl p-6 text-[14px] font-mono font-black text-white focus:border-accent outline-none transition-all uppercase tracking-widest"
+                        />
+                        <div className="absolute right-6 top-1/2 -translate-y-1/2 text-accent/20">
+                           <Wallet className="w-5 h-5" />
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="space-y-4">
+                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-white/20 italic px-2 block">Disbursement Network (ISP)</label>
+                     <div className="grid grid-cols-3 gap-3">
+                        {[
+                           { id: 'mtn', label: 'MTN', color: 'bg-[#FFCC00]' },
+                           { id: 'telecel', label: 'Telecel', color: 'bg-[#E60000]' },
+                           { id: 'airteltigo', label: 'AT', color: 'bg-[#002F6C]' }
+                        ].map((provider) => (
+                           <button
+                              key={provider.id}
+                              onClick={() => setMomoProvider(provider.id as any)}
+                              className={cn(
+                                 "py-4 rounded-xl border-2 transition-all font-black text-[9px] uppercase tracking-widest flex items-center justify-center",
+                                 momoProvider === provider.id 
+                                 ? "border-accent bg-accent/10 text-white" 
+                                 : "border-white/5 bg-white/2 text-white/20 hover:bg-white/5"
+                              )}
+                           >
+                              {provider.label}
+                           </button>
+                        ))}
+                     </div>
+                  </div>
                   
                   <div className="pt-4">
                      <button 
@@ -3097,6 +3448,28 @@ export function AgentPortal() {
                         <h3 className="text-xl font-display font-black uppercase italic tracking-tighter text-white">Payout History<span className="text-accent">_</span></h3>
                      </div>
                      <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{payouts.length} Logs</span>
+                  </div>
+
+                  {/* Withdrawal Authority Console */}
+                  <div className="mb-10 p-10 bg-white/5 rounded-[3rem] border-2 border-white/5 relative overflow-hidden group/payout">
+                     <div className="absolute inset-0 bg-gradient-to-br from-accent/5 to-transparent pointer-events-none" />
+                     <div className="flex flex-col md:flex-row justify-between items-center gap-8 relative z-10">
+                        <div className="space-y-2 text-center md:text-left">
+                           <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/20 italic">Liquid Royalty Reserve</p>
+                           <h4 className="text-6xl font-display font-black text-white tracking-tighter leading-none animate-pulse-slow">
+                              {formatGHC(totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0))}
+                           </h4>
+                           <p className="text-[9px] font-black uppercase text-accent tracking-widest mt-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg w-fit mx-auto md:ml-0">{agentProfile?.momoNumber || 'IDENTITY REQUIRED'}</p>
+                        </div>
+                        <button 
+                           onClick={handleRequestPayout}
+                           disabled={totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0) < 10}
+                           className="bg-accent text-black px-12 py-7 rounded-[2rem] font-black uppercase tracking-editorial text-[12px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_40px_rgba(242,125,38,0.3)] group-hover/payout:shadow-[0_30px_60px_rgba(242,125,38,0.4)] disabled:opacity-20 disabled:grayscale flex items-center gap-4"
+                        >
+                           <Zap className="w-5 h-5 fill-current" />
+                           <span>Request Disbursement</span>
+                        </button>
+                     </div>
                   </div>
 
                   <div className="space-y-5">

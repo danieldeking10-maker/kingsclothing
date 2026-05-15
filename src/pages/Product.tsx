@@ -7,8 +7,6 @@ import {
   Zap, 
   ShieldCheck, 
   Truck, 
-  Maximize2, 
-  ZoomIn,
   Share2,
   RefreshCw,
   Phone,
@@ -29,7 +27,7 @@ import {
   Layers,
   Edit3
 } from 'lucide-react';
-import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion, runTransaction, where, getDocs, limit } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
@@ -38,6 +36,7 @@ import { CATEGORIES, PRICING, FABRIC_COLORS, SIZES, DEPOSIT_PERCENTAGE, SUPPORT_
 import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 import { GSM } from '@/src/types';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
@@ -114,13 +113,19 @@ export function ProductPage() {
   const [selectedColor, setSelectedColor] = useState(FABRIC_COLORS[0]);
   const [selectedSize, setSelectedSize] = useState('L');
   const [isOrdering, setIsOrdering] = useState(false);
-  const [isFullScreen, setIsFullScreen] = useState(false);
   const [isPricingModalOpen, setIsPricingModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [momoNumber, setMomoNumber] = useState('');
+  const [momoProvider, setMomoProvider] = useState<'mtn' | 'telecel' | 'airteltigo'>('mtn');
   const [isVeoOpen, setIsVeoOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [promotions, setPromotions] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
   const [referralId, setReferralId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 50, y: 50 });
   const [isHovering, setIsHovering] = useState(false);
@@ -131,7 +136,11 @@ export function ProductPage() {
 
   useEffect(() => {
     if (!id) return;
-    const q = query(collection(db, 'products', id, 'reviews'), orderBy('createdAt', 'desc'));
+    const q = query(
+      collection(db, 'products', id, 'reviews'), 
+      orderBy('createdAt', 'desc'),
+      limit(15)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setReviews(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
@@ -192,9 +201,26 @@ export function ProductPage() {
       const storedRef = sessionStorage.getItem('last_referral_id');
       if (storedRef) setReferralId(storedRef);
     }
+
+    const qPromos = query(
+      collection(db, 'promotions'), 
+      where('active', '==', true),
+      limit(5)
+    );
+    const unsubscribePromos = onSnapshot(qPromos, (snapshot) => {
+      setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubscribePromos();
+    };
   }, [id, navigate]);
 
-  const price = useMemo(() => {
+  const activePromotion = useMemo(() => {
+    return promotions[0]; // Apply first active campaign if exists
+  }, [promotions]);
+
+  const basePrice = useMemo(() => {
     if (!product) return 0;
     
     // 1. Check for gsmPrices on the product itself (custom designs)
@@ -214,6 +240,60 @@ export function ProductPage() {
 
     return 180; // Absolute fallback
   }, [product, selectedGsm]);
+
+  const price = useMemo(() => {
+    let finalPrice = basePrice;
+    
+    // Apply Global Promotion
+    if (activePromotion) {
+      finalPrice = finalPrice * (1 - (activePromotion.discountPercentage / 100));
+    }
+    
+    // Apply Coupon
+    if (appliedCoupon) {
+      finalPrice = finalPrice * (1 - (appliedCoupon.discountPercentage / 100));
+    }
+    
+    return finalPrice;
+  }, [basePrice, activePromotion, appliedCoupon]);
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) return;
+    
+    try {
+      const { getDocs } = await import('firebase/firestore');
+      const q = query(
+        collection(db, 'coupons'), 
+        where('code', '==', couponCode.toUpperCase()), 
+        where('active', '==', true)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const couponData = querySnapshot.docs[0].data();
+        const couponId = querySnapshot.docs[0].id;
+        
+        // Check expiry
+        if (couponData.expiryDate && couponData.expiryDate.toDate() < new Date()) {
+          toast.error('Coupon has expired');
+          return;
+        }
+        
+        // Check usage limit
+        if (couponData.usageLimit && (couponData.usageCount || 0) >= couponData.usageLimit) {
+          toast.error('Usage terminal reached for this code');
+          return;
+        }
+
+        setAppliedCoupon({ id: couponId, ...couponData });
+        toast.success(`Coupon Applied: ${couponData.discountPercentage}% Off`);
+      } else {
+        toast.error('Identity of coupon is invalid or inactive');
+      }
+    } catch (e) {
+      toast.error('Verification failure');
+    }
+  };
 
   const deposit = price * DEPOSIT_PERCENTAGE;
   const balance = price - deposit;
@@ -421,50 +501,109 @@ export function ProductPage() {
       navigate(`/auth?redirect=/product/${id}`);
       return;
     }
+    setIsPaymentModalOpen(true);
+  };
+
+  const processPayment = async () => {
+    if (!momoNumber || momoNumber.length < 10) {
+      toast.error('Invalid Protocol: Mobile Money Number Required');
+      return;
+    }
 
     setIsOrdering(true);
-    const loadingToast = toast.loading('Initializing Secure Paystack Protocol...');
+    setIsPaymentModalOpen(false);
+    const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
     
     try {
-      // Simulate Payment Alert Trigger to Paystack/Provider
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const orderData = {
-        customerId: user.uid,
-        customerName: user.displayName,
-        customerEmail: user.email, // Ensure email is included for Paystack
-        items: [{
-          productId: product.id,
-          name: product.name,
-          gsm: selectedGsm,
-          color: selectedColor.name,
-          size: selectedSize,
-          price: price,
-          quantity: quantity
-        }],
-        totalAmount: price * quantity,
-        depositAmount: deposit * quantity,
-        status: 'pending',
-        referralAgentId: referralId || null,
-        paymentAlertSent: true,
-        createdAt: serverTimestamp()
+      const config = {
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        email: user?.email || 'customer@kingsclothing.brand',
+        amount: Math.round(deposit * quantity * 100), // convert to pesewas
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        metadata: {
+          custom_fields: [
+            {
+              display_name: "Product",
+              variable_name: "product",
+              value: product.name
+            },
+            {
+              display_name: "Momo Number",
+              variable_name: "momo_number",
+              value: momoNumber
+            },
+            {
+              display_name: "Provider",
+              variable_name: "provider",
+              value: momoProvider
+            }
+          ]
+        },
+        callback: async (response: any) => {
+          const orderData = {
+            customerId: user?.uid,
+            customerName: user?.displayName,
+            customerEmail: user?.email,
+            items: [{
+              productId: product.id,
+              name: product.name,
+              gsm: selectedGsm,
+              color: selectedColor.name,
+              size: selectedSize,
+              price: price,
+              quantity: quantity
+            }],
+            totalAmount: price * quantity,
+            depositAmount: deposit * quantity,
+            discountApplied: (basePrice - price) * quantity,
+            appliedPromotionId: activePromotion?.id || null,
+            appliedCouponCode: appliedCoupon?.code || null,
+            status: 'pending',
+            paymentStatus: 'paid',
+            paystackReference: response.reference,
+            momoNumber: momoNumber,
+            momoProvider: momoProvider,
+            referralAgentId: referralId || null,
+            createdAt: serverTimestamp()
+          };
+
+          try {
+            const orderRef = doc(collection(db, 'orders'));
+            const orderId = orderRef.id;
+
+            await runTransaction(db, async (transaction) => {
+              transaction.set(orderRef, orderData);
+              transaction.update(doc(db, 'products', product.id), {
+                salesCount: increment(quantity)
+              });
+              if (appliedCoupon) {
+                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+                  usageCount: increment(1)
+                });
+              }
+            });
+
+            toast.dismiss(loadingToast);
+            toast.success('Capital Asset Secured');
+            navigate(`/order/${orderId}`);
+          } catch (error) {
+            handleFirestoreError(error, OperationType.CREATE, 'orders');
+          }
+        },
+        onClose: () => {
+          setIsOrdering(false);
+          toast.dismiss(loadingToast);
+          toast.error('Transaction Terminated by User');
+        }
       };
 
-      const docRef = await addDoc(collection(db, 'orders'), orderData);
-
-      // Increment salesCount for the product to track trending data
-      await updateDoc(doc(db, 'products', product.id), {
-        salesCount: increment(quantity)
-      });
-
-      toast.dismiss(loadingToast);
-      toast.success('Secure Paystack Gateway Initialized!');
-      navigate(`/order/${docRef.id}`);
-
+      const handler = (window as any).PaystackPop.setup(config);
+      handler.openIframe();
+      
     } catch (error: any) {
       toast.dismiss(loadingToast);
-      toast.error('Order failed: ' + error.message);
-    } finally {
+      toast.error('Terminal Error: ' + error.message);
       setIsOrdering(false);
     }
   };
@@ -546,7 +685,7 @@ export function ProductPage() {
           {/* Left: Image Gallery (Span 7) - Sticky on Desktop */}
           <div className="lg:col-span-7 lg:sticky lg:top-24 space-y-10">
             <div 
-              className="relative aspect-[4/5] overflow-hidden rounded-[3rem] bg-[#1A1A1B] shadow-[0_0_80px_rgba(0,0,0,0.5)] cursor-zoom-in group/main"
+              className="relative aspect-[4/5] overflow-hidden rounded-[3rem] bg-[#1A1A1B] shadow-[0_0_80px_rgba(0,0,0,0.5)] group/main"
               onMouseMove={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
                 const x = ((e.clientX - rect.left) / rect.width) * 100;
@@ -558,7 +697,6 @@ export function ProductPage() {
                 setIsHovering(false);
                 setMousePos({ x: 50, y: 50 }); // Reset to center
               }}
-              onClick={() => setIsFullScreen(true)}
             >
               {imageLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F10] z-30 transition-all duration-700">
@@ -602,7 +740,7 @@ export function ProductPage() {
                       transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
                     }}
                     animate={{
-                      scale: isHovering ? 2.2 : 1,
+                      scale: 1,
                       filter: isHovering ? 'brightness(1.1) contrast(1.1)' : 'brightness(0.9) contrast(1)',
                     }}
                     transition={{
@@ -619,7 +757,7 @@ export function ProductPage() {
                       initial={{ opacity: 0 }}
                       animate={{ 
                         opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
-                        scale: isHovering ? 2.2 : 1
+                        scale: 1
                       }}
                       style={{ 
                         backgroundColor: selectedColor.hex,
@@ -634,19 +772,6 @@ export function ProductPage() {
                 </motion.div>
               </AnimatePresence>
 
-              {/* Zoom Indicator */}
-              <div className="absolute bottom-8 right-8 z-20 flex items-center gap-3">
-                <div className={cn(
-                  "px-4 py-2 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full transition-all duration-500 flex items-center gap-2",
-                  isHovering ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
-                )}>
-                  <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
-                  <span className="text-[8px] font-black uppercase tracking-widest text-accent">High-Def Lens Active</span>
-                </div>
-                <div className="bg-background/40 backdrop-blur-xl p-4 rounded-2xl border border-white/10 text-white hover:bg-accent hover:text-black transition-all group-hover/main:opacity-100 opacity-0">
-                  {isHovering ? <Maximize2 className="w-5 h-5" /> : <ZoomIn className="w-5 h-5" />}
-                </div>
-              </div>
 
               {/* View Mode Toggle - Architectural Style */}
               <div className="absolute lg:top-1/2 lg:-translate-y-1/2 top-4 left-4 lg:left-8 flex lg:flex-col flex-row gap-3 py-4 z-20">
@@ -963,7 +1088,7 @@ export function ProductPage() {
             {/* View Architecture Switcher */}
             <div className="mb-12">
                <div className="flex items-center space-x-2 mb-4">
-                  <Maximize2 className="w-3 h-3 text-accent" />
+                  <Grid3X3 className="w-3 h-3 text-accent" />
                   <span className="text-[10px] font-black uppercase tracking-editorial text-white/40">Visual Calibration</span>
                </div>
                <div className="flex p-1 bg-white/5 rounded-2xl border border-white/5 space-x-1">
@@ -1006,10 +1131,24 @@ export function ProductPage() {
                    <Zap className="w-full h-full text-white" strokeWidth={1} />
                </div>
                <div className="relative z-10">
-                  <p className="text-[9px] uppercase font-black tracking-editorial text-white/30 mb-3">Investment</p>
-                  <h2 className="text-6xl font-display font-black text-white italic tracking-tighter mb-8 group-hover:text-accent transition-colors">
-                    {formatGHC(price)}
-                  </h2>
+                  <div className="flex items-center justify-between mb-3">
+                     <p className="text-[9px] uppercase font-black tracking-editorial text-white/30">Investment</p>
+                     {(activePromotion || appliedCoupon) && (
+                       <span className="bg-accent/20 text-accent text-[8px] font-black uppercase px-2 py-1 rounded-md animate-pulse">
+                         {activePromotion ? `${activePromotion.name} Applied` : 'Coupon Validated'}
+                       </span>
+                     )}
+                  </div>
+                  <div className="flex items-baseline gap-4 mb-8">
+                     <h2 className="text-6xl font-display font-black text-white italic tracking-tighter group-hover:text-accent transition-colors">
+                       {formatGHC(price)}
+                     </h2>
+                     {(activePromotion || appliedCoupon) && (
+                       <p className="text-xl font-mono font-bold text-white/20 line-through">
+                         {formatGHC(basePrice)}
+                       </p>
+                     )}
+                  </div>
                   
                   {isBrandOwner && (
                     <button 
@@ -1180,6 +1319,26 @@ export function ProductPage() {
 
             {/* Actions */}
             <div className="flex flex-col gap-6 mt-20">
+               {/* Coupon Terminal */}
+               <div className="flex items-center gap-4 bg-white/5 border border-white/10 rounded-3xl p-4 group transition-all hover:border-accent/40">
+                  <div className="p-3 bg-accent/20 rounded-2xl">
+                     <Star className="w-5 h-5 text-accent" />
+                  </div>
+                  <input 
+                     type="text"
+                     placeholder="ENTER LOYALTY PROTOCOL"
+                     value={couponCode}
+                     onChange={(e) => setCouponCode(e.target.value)}
+                     className="flex-1 bg-transparent border-none outline-none text-[10px] font-black uppercase tracking-widest text-white placeholder:text-white/10"
+                  />
+                  <button 
+                     onClick={handleApplyCoupon}
+                     className="bg-accent text-black px-6 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:bg-white active:scale-95"
+                  >
+                     Verify
+                  </button>
+               </div>
+
                <div className="flex items-center gap-4">
                   <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
                      <button 
@@ -1468,65 +1627,103 @@ export function ProductPage() {
         )}
       </AnimatePresence>
 
+
+      {/* Payment Information Modal */}
       <AnimatePresence>
-        {isFullScreen && (
+        {isPaymentModalOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-background/90 backdrop-blur-2xl flex items-center justify-center p-4 md:p-12"
-            onClick={() => setIsFullScreen(false)}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-md flex items-center justify-center p-6"
+            onClick={() => setIsPaymentModalOpen(false)}
           >
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="absolute top-8 right-8 z-[110] bg-white text-black p-4 rounded-full shadow-2xl hover:bg-accent transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsFullScreen(false);
-              }}
-            >
-              <X className="w-6 h-6" />
-            </motion.button>
-
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              initial={{ opacity: 0, scale: 0.9, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="relative max-w-5xl w-full aspect-[4/5] md:aspect-auto md:max-h-full overflow-hidden rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,0.8)] cursor-zoom-out group"
+              exit={{ opacity: 0, scale: 0.9, y: 30 }}
+              className="glass p-10 rounded-[3rem] w-full max-w-md border border-white/10 relative"
               onClick={(e) => e.stopPropagation()}
-              onMouseMove={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const x = ((e.clientX - rect.left) / rect.width) * 100;
-                const y = ((e.clientY - rect.top) / rect.height) * 100;
-                setMousePos({ x, y });
-              }}
-              onMouseEnter={() => setIsHovering(true)}
-              onMouseLeave={() => {
-                setIsHovering(false);
-                setMousePos({ x: 50, y: 50 });
-              }}
             >
-              <motion.img
-                src={activeImage}
-                alt={product.name}
-                className="w-full h-full object-contain transition-transform duration-300 ease-out"
-                style={{
-                  transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
-                  scale: isHovering ? 2.5 : 1,
-                }}
-                referrerPolicy="no-referrer"
-              />
-              
-              <div className="absolute bottom-8 left-8 right-8 flex justify-between items-end pointer-events-none">
-                <div className="glass p-6 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity">
-                  <h2 className="text-2xl font-display font-black uppercase italic text-white mb-2">{product.name}</h2>
-                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40 italic">
-                    {viewMode === 'blueprint' ? 'Technical Blueprint Visualization' : viewMode === 'studio' ? 'Studio Heritage Shot' : 'Visual Mockup Render'}
-                  </p>
-                </div>
-              </div>
+               <button 
+                 onClick={() => setIsPaymentModalOpen(false)}
+                 className="absolute top-8 right-8 text-white/30 hover:text-white transition-colors"
+               >
+                 <X className="w-5 h-5" />
+               </button>
+
+               <div className="mb-10">
+                  <div className="flex items-center space-x-3 mb-2">
+                    <ShieldCheck className="w-5 h-5 text-accent" />
+                    <h3 className="text-3xl font-display font-black uppercase italic tracking-tighter text-white">Payment <br/> Verification</h3>
+                  </div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Authorize Secure MoMo Deployment</p>
+               </div>
+
+               <div className="space-y-8 mb-10">
+                  <div className="space-y-4">
+                     <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">Network Provider</label>
+                     <div className="grid grid-cols-3 gap-4">
+                        {[
+                          { id: 'mtn', label: 'MTN', color: 'bg-[#FFCC00]' },
+                          { id: 'telecel', label: 'Telecel', color: 'bg-[#E60000]' },
+                          { id: 'airteltigo', label: 'AT', color: 'bg-[#002F6C]' }
+                        ].map((provider) => (
+                          <button
+                            key={provider.id}
+                            onClick={() => setMomoProvider(provider.id as any)}
+                            className={cn(
+                              "relative py-4 rounded-2xl border-2 transition-all overflow-hidden font-black text-[10px] uppercase tracking-widest flex items-center justify-center",
+                              momoProvider === provider.id 
+                                ? "border-accent bg-accent/10 text-white" 
+                                : "border-white/5 bg-white/5 text-white/40 hover:bg-white/10"
+                            )}
+                          >
+                             {provider.label}
+                             {momoProvider === provider.id && (
+                               <motion.div 
+                                 layoutId="provider-dot"
+                                 className="absolute bottom-2 w-1 h-1 bg-accent rounded-full" 
+                               />
+                             )}
+                          </button>
+                        ))}
+                     </div>
+                  </div>
+
+                  <div className="space-y-4">
+                     <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">MoMo Number</label>
+                     <div className="relative group">
+                        <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                        <input 
+                          type="tel"
+                          placeholder="0XX XXX XXXX"
+                          value={momoNumber}
+                          onChange={(e) => setMomoNumber(e.target.value)}
+                          className="w-full bg-black/40 border border-white/10 rounded-2xl p-5 pl-14 text-sm font-black text-white outline-none focus:border-accent transition-all placeholder:text-white/10"
+                        />
+                     </div>
+                  </div>
+               </div>
+
+               <div className="p-6 bg-accent/5 rounded-3xl border border-accent/10 mb-10">
+                  <div className="flex justify-between items-center mb-2">
+                     <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Total Secured Deposit</span>
+                     <span className="text-xl font-display font-black text-accent">{formatGHC(deposit * quantity)}</span>
+                  </div>
+                  <p className="text-[8px] font-black uppercase tracking-widest text-white/20 italic">Payload includes production logistics and fabric sourcing.</p>
+               </div>
+
+               <button
+                 onClick={processPayment}
+                 disabled={isOrdering}
+                 className="w-full bg-accent text-black py-6 rounded-full font-black uppercase tracking-widest text-[11px] hover:bg-white transition-all flex items-center justify-center space-x-3 shadow-[0_0_50px_rgba(242,125,38,0.2)]"
+               >
+                  {isOrdering ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 animate-bounce" />}
+                  <span>Forge Payment Request</span>
+               </button>
+               
+               <p className="text-[7px] font-black uppercase tracking-[0.4em] text-white/10 mt-8 text-center">Kings Clothing Authority Verification Protocol</p>
             </motion.div>
           </motion.div>
         )}

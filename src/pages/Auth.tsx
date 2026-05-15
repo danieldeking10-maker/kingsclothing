@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAlert, ChevronRight } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAlert, ChevronRight, AlertCircle, Crown } from 'lucide-react';
 import { 
   signInWithPopup, 
   GoogleAuthProvider,
@@ -9,48 +9,72 @@ import {
   sendPasswordResetEmail,
   updateProfile
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, runTransaction } from 'firebase/firestore';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { auth, db } from '../lib/firebase';
 import { cn } from '@/src/lib/utils';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 
 export function AuthPage() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const searchMode = searchParams.get('mode') || 'signin';
+  const redirectPath = searchParams.get('redirect') || '/agent';
+  const referralId = searchParams.get('ref');
+  
   const [isSignUp, setIsSignUp] = useState(searchMode === 'signup');
+  const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  
-  const referralId = searchParams.get('ref');
-  const redirectPath = searchParams.get('redirect') || '/agent';
-  const navigate = useNavigate();
+  const [error, setError] = useState<string | null>(null);
+
+  // Sync state with URL if it changes
+  useEffect(() => {
+    setIsSignUp(searchMode === 'signup');
+  }, [searchMode]);
+
+  const toggleMode = () => {
+    const newMode = isSignUp ? 'signin' : 'signup';
+    setIsSignUp(!isSignUp);
+    // Persist search params while toggling
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set('mode', newMode);
+    setSearchParams(newParams);
+  };
 
   const createProfile = async (user: any) => {
     const docRef = doc(db, 'agents', user.uid);
-    const docSnap = await getDoc(docRef);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(docRef);
 
-    if (!docSnap.exists()) {
-      await setDoc(docRef, {
-        uid: user.uid,
-        name: user.displayName || name,
-        email: user.email,
-        role: 'agent',
-        referredBy: referralId || null,
-        momoNumber: '',
-        referralCode: '',
-        stats: {
-          totalSales: 0,
-          commissionEarned: 0,
-          designsApproved: 0
-        },
-        createdAt: serverTimestamp()
+        if (!docSnap.exists()) {
+          transaction.set(docRef, {
+            uid: user.uid,
+            name: user.displayName || name || 'Citizen ' + user.uid.slice(0, 4),
+            email: user.email,
+            role: 'agent',
+            referredBy: referralId || sessionStorage.getItem('last_referral_id') || null,
+            referralCode: '',
+            momoNumber: '',
+            stats: {
+              totalSales: 0,
+              commissionEarned: 0,
+              designsApproved: 0
+            },
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
       });
       return true;
+    } catch (err) {
+      console.error('Transaction failed: ', err);
+      handleFirestoreError(err, OperationType.WRITE, `agents/${user.uid}`);
+      return false;
     }
-    return false;
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -61,6 +85,8 @@ export function AuthPage() {
     }
 
     setIsLoading(true);
+    setError(null);
+
     try {
       if (isSignUp) {
         const result = await createUserWithEmailAndPassword(auth, email, password);
@@ -69,17 +95,25 @@ export function AuthPage() {
         toast.success(`Welcome to the Kingdom, ${name}!`);
       } else {
         const result = await signInWithEmailAndPassword(auth, email, password);
+        // Robustness: check/create profile on sign in too
+        await createProfile(result.user);
         toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
       }
-      navigate(redirectPath);
+      
+      // Delay navigation slightly to allow background tasks to settle
+      setTimeout(() => navigate(redirectPath), 500);
     } catch (error: any) {
-      console.error(error);
+      console.error('Auth Error:', error);
       let msg = 'Authentication failed';
+      
       if (error.code === 'auth/user-not-found') msg = 'No account found with this email';
-      if (error.code === 'auth/wrong-password') msg = 'Incorrect password';
-      if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered';
-      if (error.code === 'auth/weak-password') msg = 'Password should be at least 6 characters';
-      if (error.code === 'auth/invalid-credential') msg = 'Invalid access credentials';
+      else if (error.code === 'auth/wrong-password') msg = 'Incorrect password';
+      else if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered';
+      else if (error.code === 'auth/weak-password') msg = 'Password should be at least 6 characters';
+      else if (error.code === 'auth/invalid-credential') msg = 'Invalid access credentials';
+      else if (error.message) msg = error.message;
+
+      setError(msg);
       toast.error(msg);
     } finally {
       setIsLoading(false);
@@ -101,21 +135,21 @@ export function AuthPage() {
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
+    setError(null);
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
-      const isNew = await createProfile(result.user);
-
-      if (isNew) {
-        toast.success(`Welcome to the Kingdom, ${result.user.displayName}!`);
-      } else {
-        toast.success(`Welcome back, ${result.user.displayName}!`);
-      }
+      await createProfile(result.user);
+      toast.success(`Welcome back, ${result.user.displayName}!`);
       
-      navigate(redirectPath);
+      setTimeout(() => navigate(redirectPath), 500);
     } catch (error: any) {
-      console.error(error);
-      toast.error(error.message || 'Failed to sign in');
+      console.error('Google Sign In Error:', error);
+      const msg = error.code === 'auth/popup-blocked' 
+        ? 'Popup blocked by browser' 
+        : 'Google Sign-In failed';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -181,6 +215,20 @@ export function AuthPage() {
             </div>
 
             <form onSubmit={handleEmailAuth} className="space-y-6">
+              <AnimatePresence mode="wait">
+                {error && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-3 text-red-500"
+                  >
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <p className="text-[10px] font-black uppercase tracking-widest">{error}</p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {isSignUp && (
                 <div className="space-y-2">
                   <div className="relative group">
@@ -262,7 +310,7 @@ export function AuthPage() {
 
             <div className="pt-6 text-center">
               <button 
-                 onClick={() => setIsSignUp(!isSignUp)}
+                 onClick={toggleMode}
                  className="text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
               >
                  {isSignUp ? 'Already a Citizen? Return to Authentication' : 'New to the Kingdom? Request Citizenship'}
