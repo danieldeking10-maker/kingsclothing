@@ -155,16 +155,16 @@ export function ProductPage() {
   useEffect(() => {
     if (!id) return;
     setImageLoading(true); // Reset image loading on ID change
-    const fetchProduct = async () => {
-      try {
-        const docRef = doc(db, 'products', id);
-        const docSnap = await getDoc(docRef);
+    const fetchProduct = () => {
+      const docRef = doc(db, 'products', id);
+      const unsubscribe = onSnapshot(docRef, (docSnap) => {
         if (docSnap.exists()) {
           const fetchedProduct = { id: docSnap.id, ...docSnap.data() };
           setProduct(fetchedProduct);
           addProduct(docSnap.id);
-        } else {
-          // Fallback if not in DB yet (for dev)
+          setLoading(false);
+        } else if (!product) {
+          // If product doesn't exist and we have no state, fallback
           const fallbackProduct = {
             id: id,
             name: "The Dynasty Tee",
@@ -176,14 +176,16 @@ export function ProductPage() {
           };
           setProduct(fallbackProduct);
           addProduct(id);
+          setLoading(false);
         }
-      } catch (error) {
-        toast.error('Failed to load product');
-      } finally {
+      }, (error) => {
+        console.error('Failed to load product:', error);
+        toast.error('Identity of product is currently unreachable');
         setLoading(false);
-      }
+      });
+      return unsubscribe;
     };
-    fetchProduct();
+    const unsubscribeProduct = fetchProduct();
 
     // Capture referral ID & GSM
     const params = new URLSearchParams(window.location.search);
@@ -213,6 +215,7 @@ export function ProductPage() {
 
     return () => {
       unsubscribePromos();
+      unsubscribeProduct();
     };
   }, [id, navigate]);
 

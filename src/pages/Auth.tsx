@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAlert, ChevronRight, AlertCircle, Crown } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAlert, ChevronRight, AlertCircle, Crown, Eye, EyeOff, Loader2, Sparkles, Binary } from 'lucide-react';
 import { 
   signInWithPopup, 
   GoogleAuthProvider,
@@ -28,6 +28,7 @@ export function AuthPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Sync state with URL if it changes
@@ -216,6 +217,39 @@ export function AuthPage() {
 
             <form onSubmit={handleEmailAuth} className="space-y-6">
               <AnimatePresence mode="wait">
+                {isLoading && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-50 bg-background/80 backdrop-blur-xl flex flex-col items-center justify-center space-y-6"
+                  >
+                    <div className="relative">
+                      <div className="w-24 h-24 border-2 border-accent/20 rounded-full animate-ping" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Loader2 className="w-10 h-10 text-accent animate-spin" />
+                      </div>
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: '100%' }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                        className="absolute -bottom-10 left-0 h-1 bg-accent rounded-full"
+                      />
+                    </div>
+                    <div className="text-center space-y-2">
+                       <p className="text-[10px] font-black uppercase tracking-[0.5em] text-accent animate-pulse italic">
+                        {isSignUp ? 'Constructing Identity...' : 'Synchronizing Authority...'}
+                       </p>
+                       <div className="flex items-center justify-center gap-2 text-white/20 text-[8px] font-mono">
+                          <Binary className="w-3 h-3" />
+                          <span>ENCRYPTING_PACKETS_V4</span>
+                       </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <AnimatePresence mode="wait">
                 {error && (
                   <motion.div 
                     initial={{ opacity: 0, height: 0 }}
@@ -229,83 +263,141 @@ export function AuthPage() {
                 )}
               </AnimatePresence>
 
-              {isSignUp && (
-                <div className="space-y-2">
+              <motion.div 
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  hidden: { opacity: 0 },
+                  visible: { 
+                    opacity: 1,
+                    transition: { staggerChildren: 0.1 }
+                  }
+                }}
+                className="space-y-6"
+              >
+                {isSignUp && (
+                  <motion.div 
+                    variants={{
+                      hidden: { opacity: 0, x: -20 },
+                      visible: { opacity: 1, x: 0 }
+                    }}
+                    className="space-y-2"
+                  >
+                    <div className="relative group">
+                      <User className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                      <input 
+                        type="text" 
+                        placeholder="FULL NAME"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full bg-white/[0.03] border border-white/10 rounded-[1.5rem] py-5 pl-14 pr-6 text-[11px] font-black uppercase tracking-widest outline-none focus:border-accent/40 focus:bg-white/[0.05] transition-all font-sans placeholder:text-white/10"
+                      />
+                    </div>
+                  </motion.div>
+                )}
+                
+                <motion.div 
+                  variants={{
+                    hidden: { opacity: 0, x: -20 },
+                    visible: { opacity: 1, x: 0 }
+                  }}
+                  className="space-y-2"
+                >
                   <div className="relative group">
-                    <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                    <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
                     <input 
-                      type="text" 
-                      placeholder="FULL NAME"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
+                      type="email" 
+                      placeholder="EMAIL ADDRESS"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full bg-white/[0.03] border border-white/10 rounded-[1.5rem] py-5 pl-14 pr-6 text-[11px] font-black uppercase tracking-widest outline-none focus:border-accent/40 focus:bg-white/[0.05] transition-all font-sans placeholder:text-white/10"
                     />
                   </div>
-                </div>
-              )}
-              
-              <div className="space-y-2">
-                <div className="relative group">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
-                  <input 
-                    type="email" 
-                    placeholder="EMAIL ADDRESS"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
-                  />
-                </div>
-              </div>
+                </motion.div>
 
-              <div className="space-y-2">
-                <div className="relative group">
-                  <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
-                  <input 
-                    type="password" 
-                    placeholder="ACCESS KEY"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent/40 transition-all font-sans"
-                  />
-                </div>
-                {!isSignUp && (
-                  <button 
-                    type="button"
-                    onClick={handleForgotPassword}
-                    className="text-[8px] font-black uppercase tracking-widest text-white/20 hover:text-accent transition-colors ml-2"
-                  >
-                    Restore Access Credentials
-                  </button>
-                )}
-              </div>
+                <motion.div 
+                  variants={{
+                    hidden: { opacity: 0, x: -20 },
+                    visible: { opacity: 1, x: 0 }
+                  }}
+                  className="space-y-2"
+                >
+                  <div className="relative group">
+                    <Lock className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
+                    <input 
+                      type={showPassword ? "text" : "password"} 
+                      placeholder="ACCESS KEY"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full bg-white/[0.03] border border-white/10 rounded-[1.5rem] py-5 pl-14 pr-14 text-[11px] font-black uppercase tracking-widest outline-none focus:border-accent/40 focus:bg-white/[0.05] transition-all font-sans placeholder:text-white/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-6 top-1/2 -translate-y-1/2 text-white/20 hover:text-accent transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {!isSignUp && (
+                    <button 
+                      type="button"
+                      onClick={handleForgotPassword}
+                      className="text-[9px] font-black uppercase tracking-widest text-white/20 hover:text-accent transition-colors ml-4"
+                    >
+                      Restore Access Credentials
+                    </button>
+                  )}
+                </motion.div>
 
-              <button 
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-accent text-black p-5 rounded-2xl font-black uppercase tracking-editorial text-[10px] flex items-center justify-center space-x-3 hover:bg-white transition-all disabled:opacity-50 shadow-xl"
-              >
-                {isLoading ? <Zap className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4" />}
-                <span>{isSignUp ? 'Initialize Citizenship' : 'Deploy Identity'}</span>
-              </button>
+                <motion.button 
+                  variants={{
+                    hidden: { opacity: 0, y: 20 },
+                    visible: { opacity: 1, y: 0 }
+                  }}
+                  type="submit"
+                  disabled={isLoading}
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full bg-accent text-black p-6 rounded-[1.5rem] font-black uppercase tracking-editorial text-[11px] flex items-center justify-center space-x-4 hover:shadow-[0_20px_50px_rgba(234,179,8,0.2)] transition-all disabled:opacity-50 overflow-hidden relative group"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_2s_infinite]" />
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />}
+                  <span>{isSignUp ? 'Initialize Citizenship' : 'Deploy Identity'}</span>
+                </motion.button>
 
-              <div className="relative pt-4">
-                <div className="absolute inset-0 flex items-center px-2 pt-4">
-                  <div className="w-full border-t border-white/5"></div>
-                </div>
-                <div className="relative flex justify-center text-[8px] uppercase font-black tracking-[0.4em]">
-                  <span className="bg-background px-6 text-white/10 italic">OR USE EXTERNAL AUTH</span>
-                </div>
-              </div>
+                <motion.div 
+                  variants={{
+                    hidden: { opacity: 0 },
+                    visible: { opacity: 1 }
+                  }}
+                  className="relative pt-4"
+                >
+                  <div className="absolute inset-0 flex items-center px-2 pt-4">
+                    <div className="w-full border-t border-white/5"></div>
+                  </div>
+                  <div className="relative flex justify-center text-[9px] uppercase font-black tracking-[0.4em]">
+                    <span className="bg-background px-6 text-white/10 italic">OR USE EXTERNAL AUTH</span>
+                  </div>
+                </motion.div>
 
-              <button 
-                type="button"
-                onClick={handleGoogleSignIn}
-                disabled={isLoading}
-                className="w-full bg-white/5 text-white/60 p-5 rounded-2xl flex items-center justify-center space-x-6 hover:bg-white hover:text-black transition-all group disabled:opacity-50 border border-white/10"
-              >
-                <img src="https://authjs.dev/img/providers/google.svg" alt="Google" className="w-5 h-5 grayscale group-hover:grayscale-0 transition-all" />
-                <span className="font-black uppercase tracking-editorial text-[10px]">Authenticate with Google</span>
-              </button>
+                <motion.button 
+                  variants={{
+                    hidden: { opacity: 0, y: 20 },
+                    visible: { opacity: 1, y: 0 }
+                  }}
+                  type="button"
+                  onClick={handleGoogleSignIn}
+                  disabled={isLoading}
+                  className="w-full bg-white/[0.03] text-white/60 p-6 rounded-[1.5rem] flex items-center justify-center space-x-6 hover:bg-white hover:text-black transition-all group disabled:opacity-50 border border-white/10"
+                >
+                  <div className="flex items-center gap-4">
+                    <img src="https://authjs.dev/img/providers/google.svg" alt="Google" className="w-5 h-5 grayscale group-hover:grayscale-0 transition-all" />
+                    <span className="font-black uppercase tracking-editorial text-[11px]">Authenticate with Google</span>
+                  </div>
+                  <Sparkles className="w-4 h-4 text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
+                </motion.button>
+              </motion.div>
             </form>
 
             <div className="pt-6 text-center">

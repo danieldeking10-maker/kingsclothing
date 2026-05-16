@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2 } from 'lucide-react';
+import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download } from 'lucide-react';
 import { motion, AnimatePresence, stagger } from 'motion/react';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
@@ -10,6 +10,7 @@ import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
 import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
 import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 import { CartDrawer } from './CartDrawer';
 
@@ -31,6 +32,7 @@ export function Header() {
   const { user, isBrandOwner } = useAuth();
   const { totalItems } = useCart();
   const navigate = useNavigate();
+  const { installPrompt, isInstalled, showInstallPrompt } = usePWAInstall();
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -355,7 +357,17 @@ export function Header() {
             <Link to="/shop" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Shop</Link>
             <Link to="/agent" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Agents</Link>
             
-            <div className="flex items-center space-x-2 lg:space-x-6 border-l border-white/10 pl-2 lg:pl-8">
+            {installPrompt && (
+              <button 
+                onClick={showInstallPrompt}
+                className="flex items-center gap-2 text-[10px] font-black uppercase tracking-editorial text-accent animate-pulse px-4 py-2 bg-accent/10 rounded-full border border-accent/20 hover:bg-accent hover:text-black transition-all"
+              >
+                <Download className="w-3 h-3" />
+                Install Protocol
+              </button>
+            )}
+
+            <div className="flex items-center space-x-2 lg:space-x-8 border-l border-white/10 pl-2 lg:pl-8">
               {user ? (
                 <div className="flex items-center space-x-2 lg:space-x-4">
                   <Link to="/agent" className="p-2 lg:p-3 bg-white text-black rounded-full transition-all hover:bg-accent group box-border border-2 border-transparent hover:border-black/10">
@@ -605,6 +617,23 @@ export function Header() {
                         </Link>
                       </motion.div>
                     ))}
+
+                    {installPrompt && (
+                      <motion.div
+                        variants={{
+                          hidden: { opacity: 0, scale: 0.9 },
+                          visible: { opacity: 1, scale: 1 }
+                        }}
+                      >
+                         <button 
+                          onClick={() => { showInstallPrompt(); setIsMenuOpen(false); }}
+                          className="w-full py-6 bg-accent flex items-center justify-center gap-4 rounded-3xl group shadow-[0_20px_40px_rgba(234,179,8,0.1)]"
+                        >
+                          <Download className="w-6 h-6 text-black group-hover:scale-110 transition-transform" />
+                          <span className="text-2xl font-display font-black uppercase italic tracking-tighter text-black">Download App</span>
+                        </button>
+                      </motion.div>
+                    )}
                   </motion.nav>
 
                   {/* Account Section Refined */}
@@ -688,6 +717,8 @@ export function Footer() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const { installPrompt, showInstallPrompt } = usePWAInstall();
+
   return (
     <footer className="bg-background border-t border-white/10 py-16 px-4 relative">
       {/* Back to Top */}
@@ -716,6 +747,9 @@ export function Footer() {
             <li><Link to="/agent" className="hover:text-white transition-colors">Become Agent</Link></li>
             <li><Link to="/about" className="hover:text-white transition-colors">Our Ethos</Link></li>
             <li><Link to="/tos" className="hover:text-white transition-colors">Terms</Link></li>
+            {installPrompt && (
+              <li><button onClick={showInstallPrompt} className="text-accent underline decoration-accent/20 hover:text-white transition-colors">Install App</button></li>
+            )}
           </ul>
         </div>
 

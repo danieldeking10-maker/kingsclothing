@@ -571,7 +571,11 @@ export function AgentPortal() {
     // Fetch all orders for brand owner for management
     let unsubscribeAllOrders = () => {};
     if (isBrandOwner) {
-      const allOrdersQuery = query(collection(db, 'orders'));
+      const allOrdersQuery = query(
+        collection(db, 'orders'),
+        orderBy('createdAt', 'desc'),
+        limit(100)
+      );
       unsubscribeAllOrders = onSnapshot(allOrdersQuery, (snapshot) => {
         setAllOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
@@ -585,12 +589,20 @@ export function AgentPortal() {
     let unsubscribeCoupons = () => {};
 
     if (isBrandOwner) {
-      const agentsQuery = query(collection(db, 'agents'));
+      const agentsQuery = query(
+        collection(db, 'agents'),
+        orderBy('createdAt', 'desc'),
+        limit(100)
+      );
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
         setAllAgents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
 
-      const designsQuery = query(collection(db, 'products'));
+      const designsQuery = query(
+        collection(db, 'products'),
+        orderBy('createdAt', 'desc'),
+        limit(100)
+      );
       unsubscribeAllDesigns = onSnapshot(designsQuery, (snapshot) => {
         setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
