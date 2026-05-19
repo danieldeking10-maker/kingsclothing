@@ -40,6 +40,7 @@ import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
+import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
 
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
@@ -737,11 +738,12 @@ export function ProductPage() {
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.5 }}
                 >
-                  <motion.img
+                  <EnhancedImage
                     src={activeImage}
                     onLoad={() => setImageLoading(false)}
                     alt={product.name}
                     className="w-full h-full object-cover"
+                    aspectRatio="aspect-auto"
                     style={{
                       transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
                     }}
@@ -753,7 +755,6 @@ export function ProductPage() {
                       scale: { type: "spring", stiffness: 100, damping: 20 },
                       filter: { duration: 0.4 }
                     }}
-                    referrerPolicy="no-referrer"
                   />
                   
                   {/* Digital Fabric Dye Overlay */}
@@ -835,13 +836,13 @@ export function ProductPage() {
                     viewMode === 'mockup' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
-                  <img 
+                  <EnhancedImage 
                     src={product.colorImages?.[selectedColor.name] || product.mockupImage} 
                     alt="Mockup" 
-                    className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
-                    referrerPolicy="no-referrer" 
+                    className="group-hover/thumb:scale-110" 
+                    aspectRatio="aspect-auto h-full w-full"
                   />
-                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center z-10">
                     <span className="text-[6px] font-black uppercase tracking-widest text-white">Blueprint</span>
                   </div>
                 </button>
@@ -852,13 +853,13 @@ export function ProductPage() {
                     viewMode === 'studio' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                   )}
                 >
-                  <img 
+                  <EnhancedImage 
                     src={product.colorStudioImages?.[selectedColor.name] || product.studioImage} 
                     alt="Studio" 
-                    className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
-                    referrerPolicy="no-referrer" 
+                    className="group-hover/thumb:scale-110" 
+                    aspectRatio="aspect-auto h-full w-full"
                   />
-                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                  <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center z-10">
                     <span className="text-[6px] font-black uppercase tracking-widest text-white">Studio</span>
                   </div>
                 </button>
@@ -870,13 +871,13 @@ export function ProductPage() {
                       viewMode === 'blueprint' ? "border-accent shadow-lg scale-105" : "border-white/5 opacity-40 hover:opacity-100 hover:border-white/20"
                     )}
                   >
-                    <img 
+                    <EnhancedImage 
                       src={product.colorBlueprints[selectedColor.name]} 
                       alt="Tech" 
-                      className="w-full h-full object-cover transition-transform group-hover/thumb:scale-110" 
-                      referrerPolicy="no-referrer" 
+                      className="group-hover/thumb:scale-110" 
+                      aspectRatio="aspect-auto h-full w-full"
                     />
-                    <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center">
+                    <div className="absolute inset-x-0 bottom-0 py-1 bg-black/60 text-center z-10">
                       <span className="text-[6px] font-black uppercase tracking-widest text-white">Tech</span>
                     </div>
                   </button>

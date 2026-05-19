@@ -1,16 +1,22 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, HTMLMotionProps } from 'motion/react';
 import { cn } from '@/src/lib/utils';
 
-interface EnhancedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
+interface EnhancedImageProps extends HTMLMotionProps<"img"> {
   aspectRatio?: string;
 }
 
 export function EnhancedImage({ className, src, alt, aspectRatio = "aspect-[4/5]", ...props }: EnhancedImageProps) {
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Filter out any props that might conflict with motion
-  const { onAnimationStart, ...imgProps } = props as any;
+  // Filter out internal motion props to merge with external ones
+  const { 
+    initial: extInitial, 
+    animate: extAnimate, 
+    transition: extTransition, 
+    onLoad: extOnLoad,
+    ...restProps 
+  } = props;
 
   return (
     <div className={cn("relative overflow-hidden bg-white/5", aspectRatio, className)}>
@@ -27,18 +33,17 @@ export function EnhancedImage({ className, src, alt, aspectRatio = "aspect-[4/5]
       <motion.img
         src={src}
         alt={alt}
-        initial={{ opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
-        animate={{ 
-          opacity: isLoaded ? 1 : 0,
-          scale: isLoaded ? 1 : 1.05,
-          filter: isLoaded ? 'blur(0px)' : 'blur(20px)'
+        initial={extInitial || { opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
+        animate={isLoaded ? (extAnimate || { opacity: 1, scale: 1, filter: 'blur(0px)' }) : { opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
+        transition={extTransition || { duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        onLoad={(e) => {
+          setIsLoaded(true);
+          if (extOnLoad) (extOnLoad as any)(e);
         }}
-        transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-        onLoad={() => setIsLoaded(true)}
         className={cn("w-full h-full object-cover", className)}
         decoding="async"
         loading="lazy"
-        {...imgProps}
+        {...restProps}
       />
     </div>
   );

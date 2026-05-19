@@ -32,10 +32,13 @@ const getPrice = (product: any): number => {
   return 150;
 };
 
+import { useDebounce } from '../hooks/useDebounce';
+
 export function ShopPage() {
   const { user, isAdmin } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const search = searchParams.get('search')?.toLowerCase() || '';
+  const rawSearch = searchParams.get('search')?.toLowerCase() || '';
+  const search = useDebounce(rawSearch, 300);
   const sortParam = searchParams.get('sort') || 'newest';
   
   const [products, setProducts] = useState<any[]>([]);
@@ -107,7 +110,7 @@ export function ShopPage() {
       if (sortBy === 'price-high') return priceB - priceA;
       return 0;
     });
-  }, [products, search, selectedCategory, sortBy]);
+  }, [products, search, selectedCategory, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy]);
 
   const isNew = (createdAt: any) => {
     if (!createdAt) return false;
