@@ -3,8 +3,12 @@ import { useState, useEffect } from 'react';
 export function usePWAInstall() {
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
+    const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    setIsIOS(isIOSDevice);
+
     const handleBeforeInstallPrompt = (e: any) => {
       e.preventDefault();
       setInstallPrompt(e);
@@ -39,5 +43,5 @@ export function usePWAInstall() {
     }
   };
 
-  return { installPrompt, isInstalled, showInstallPrompt };
+  return { installPrompt, isInstalled, isIOS, showInstallPrompt };
 }

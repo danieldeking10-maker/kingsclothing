@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon } from 'lucide-react';
@@ -10,6 +10,7 @@ import { useCart } from '../lib/CartContext';
 import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+import { EnhancedImage } from './ui/EnhancedImage';
 
 interface ProductCardProps {
   product: any;
@@ -20,30 +21,22 @@ interface ProductCardProps {
 }
 
 const getProductPrice = (product: any, selectedGsm: GSM): number => {
-  // 1. Check for gsmPrices on the product itself (managed by ledger)
-  if (product.gsmPrices && product.gsmPrices[selectedGsm]) {
-    return product.gsmPrices[selectedGsm];
-  }
-
-  // 2. Fallback to global PRICING constants
+  if (product.isOnSale && product.salePrice) return product.salePrice;
+  if (product.gsmPrices && product.gsmPrices[selectedGsm]) return product.gsmPrices[selectedGsm];
   const globalCategoryPricing = (PRICING as any)[product.category];
-  
   if (globalCategoryPricing) {
     if (typeof globalCategoryPricing === 'object') {
       return globalCategoryPricing[selectedGsm] || globalCategoryPricing['260'] || globalCategoryPricing['standard'] || 150;
     }
     return globalCategoryPricing;
   }
-
-  return 150; // Final safety fallback
+  return 150;
 };
 
-export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDelete, onUpdatePrice, isNew }) => {
+export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, isNew }: ProductCardProps) => {
   const { addItem } = useCart();
-  // AI Tags Section
   const [tags, setTags] = React.useState<string[]>(product.aiTags || []);
   const [loadingTags, setLoadingTags] = React.useState(false);
-
   const [showShareMenu, setShowShareMenu] = React.useState(false);
   const [isGsmModalOpen, setIsGsmModalOpen] = React.useState(false);
   const [gsmPrices, setGsmPrices] = React.useState<Record<string, string>>({
@@ -54,7 +47,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
   const [isSaving, setIsSaving] = React.useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = React.useState(false);
 
-  // Sync GSM prices when product data changes
   React.useEffect(() => {
     setGsmPrices({
       '230': product.gsmPrices?.['230']?.toString() || '',
@@ -72,7 +64,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
 
   const [selectedColor, setSelectedColor] = React.useState(availableColors[0] || FABRIC_COLORS[0]);
 
-  // Sync color if availableColors changes
   React.useEffect(() => {
     if (availableColors.length > 0) {
       const exists = availableColors.find(c => c.name === selectedColor.name);
@@ -81,54 +72,36 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
   }, [availableColors]);
   
   const gsmOptions = React.useMemo(() => {
-    if (product.gsmOptions && product.gsmOptions.length > 0) {
-      return product.gsmOptions as GSM[];
-    }
-    if (product.category === 'T-Shirts') {
-      return ['230', '260', '320'] as GSM[];
-    }
+    if (product.gsmOptions && product.gsmOptions.length > 0) return product.gsmOptions as GSM[];
+    if (product.category === 'T-Shirts') return ['230', '260', '320'] as GSM[];
     return ['standard'] as GSM[];
   }, [product.gsmOptions, product.category]);
 
   const [selectedGsm, setSelectedGsm] = React.useState<GSM>(gsmOptions[0] || '260');
 
-  const currentPrice = React.useMemo(() => {
-    return getProductPrice(product, selectedGsm);
-  }, [product, selectedGsm]);
+  const currentPrice = React.useMemo(() => getProductPrice(product, selectedGsm), [product, selectedGsm]);
 
   const activeImage = React.useMemo(() => {
     const colorGsmKey = `${selectedColor.name}-${selectedGsm}`;
-    // GSM-Color Specific Asset
-    if (product.colorImages?.[colorGsmKey]) {
-      return product.colorImages[colorGsmKey];
-    }
-    // Color Only Asset
-    if (product.colorImages?.[selectedColor.name]) {
-      return product.colorImages[selectedColor.name];
-    }
+    if (product.colorImages?.[colorGsmKey]) return product.colorImages[colorGsmKey];
+    if (product.colorImages?.[selectedColor.name]) return product.colorImages[selectedColor.name];
     return product.mockupImage;
   }, [product, selectedColor, selectedGsm]);
 
   React.useEffect(() => {
     const fetchTags = async () => {
       if (product.aiTags && product.aiTags.length > 0) return;
-      
       setLoadingTags(true);
       try {
         const generatedTags = await generateProductTags(product.name, product.category, product.description || '');
         setTags(generatedTags);
-        // Persist tags to Firestore for caching
-        const productRef = doc(db, 'products', product.id);
-        await updateDoc(productRef, {
-          aiTags: generatedTags
-        });
+        await updateDoc(doc(db, 'products', product.id), { aiTags: generatedTags });
       } catch (error) {
         console.error('Failed to generate/save tags:', error);
       } finally {
         setLoadingTags(false);
       }
     };
-
     if (product.name && (!product.aiTags || product.aiTags.length === 0)) {
       fetchTags();
     }
@@ -211,11 +184,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
       <Link to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`} className="block space-y-6">
         <div className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#1A1A1B] group-hover:shadow-[0_0_50px_rgba(242,125,38,0.1)] transition-all duration-700">
           <div className="relative w-full h-full">
-            <img 
+            <EnhancedImage 
               src={activeImage} 
               alt={product.name} 
-              className="w-full h-full object-cover grayscale brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-1000 group-hover:scale-105"
-              referrerPolicy="no-referrer"
+              className="grayscale brightness-75 group-hover:grayscale-0 group-hover:brightness-100 transition-all duration-1000 group-hover:scale-105"
             />
             
             {/* Color Dye Filter (if no specific image exists) */}
@@ -238,6 +210,9 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
                 </p>
                 {isNew && (
                   <span className="ml-2 bg-accent text-black text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">NEW</span>
+                )}
+                {product.isOnSale && (
+                  <span className="ml-2 bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter animate-pulse">SALE</span>
                 )}
              </div>
           </div>
@@ -422,9 +397,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
                 </div>
               )}
               <div className="flex items-center gap-2">
-                 <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
-                   {formatGHC(currentPrice)}
-                 </p>
+                 <div className="flex flex-col items-end">
+                    {product.isOnSale && product.salePrice && (
+                       <p className="text-[10px] font-mono font-bold text-white/20 line-through tracking-tighter">
+                         {formatGHC(getProductPrice({ ...product, isOnSale: false }, selectedGsm))}
+                       </p>
+                    )}
+                    <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
+                      {formatGHC(currentPrice)}
+                    </p>
+                 </div>
                  {isAdmin && onUpdatePrice && (
                     <div className="flex items-center gap-1">
                       <button 
@@ -568,15 +550,12 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
               {/* Product Visual Identity */}
               <div className="w-full md:w-1/2 aspect-square md:aspect-auto relative overflow-hidden bg-black flex items-center justify-center group/visual">
                 <AnimatePresence mode="wait">
-                  <motion.img
+                  <EnhancedImage
                     key={activeImage}
-                    initial={{ opacity: 0, scale: 1.1 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
                     src={activeImage}
                     alt={product.name}
-                    className="w-full h-full object-cover grayscale brightness-50 group-hover/visual:grayscale-0 group-hover/visual:brightness-100 transition-all duration-1000"
+                    className="grayscale brightness-50 group-hover/visual:grayscale-0 group-hover/visual:brightness-100 transition-all duration-1000"
+                    aspectRatio="aspect-auto h-full w-full"
                   />
                 </AnimatePresence>
                 
@@ -705,4 +684,4 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, isAdmin, onDe
       </AnimatePresence>
     </motion.div>
   );
-}
+});

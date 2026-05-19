@@ -11,6 +11,7 @@ import { cn } from '@/src/lib/utils';
 import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
 import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { PWAInstallModal } from './PWAInstallModal';
 
 import { CartDrawer } from './CartDrawer';
 
@@ -32,7 +33,8 @@ export function Header() {
   const { user, isBrandOwner } = useAuth();
   const { totalItems } = useCart();
   const navigate = useNavigate();
-  const { installPrompt, isInstalled, showInstallPrompt } = usePWAInstall();
+  const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -356,10 +358,16 @@ export function Header() {
           <nav className="hidden md:flex items-center space-x-2 lg:space-x-8 flex-shrink-0">
             <Link to="/shop" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Shop</Link>
             <Link to="/agent" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Agents</Link>
+            {user && (
+              <Link to="/orders" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">My Orders</Link>
+            )}
             
-            {installPrompt && (
+            {(installPrompt || isIOS) && (
               <button 
-                onClick={showInstallPrompt}
+                onClick={() => {
+                  if (isIOS) setIsInstallModalOpen(true);
+                  else showInstallPrompt();
+                }}
                 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-editorial text-accent animate-pulse px-4 py-2 bg-accent/10 rounded-full border border-accent/20 hover:bg-accent hover:text-black transition-all"
               >
                 <Download className="w-3 h-3" />
@@ -595,7 +603,8 @@ export function Header() {
                     {[
                       { label: 'The Shop', path: '/shop', icon: Package },
                       { label: 'Legion Agents', path: '/agent', icon: Users },
-                      { label: 'Security Hub', path: '/order/lookup', icon: ShieldCheck },
+                      ...(user ? [{ label: 'Order Archive', path: '/orders', icon: Receipt }] : []),
+                      { label: 'Security Hub', path: '/orders', icon: ShieldCheck },
                     ].map((link, idx) => (
                       <motion.div 
                         key={idx}
@@ -618,7 +627,7 @@ export function Header() {
                       </motion.div>
                     ))}
 
-                    {installPrompt && (
+                    {((installPrompt && !isInstalled) || isIOS) && (
                       <motion.div
                         variants={{
                           hidden: { opacity: 0, scale: 0.9 },
@@ -626,7 +635,11 @@ export function Header() {
                         }}
                       >
                          <button 
-                          onClick={() => { showInstallPrompt(); setIsMenuOpen(false); }}
+                          onClick={() => { 
+                            if (isIOS) setIsInstallModalOpen(true);
+                            else showInstallPrompt(); 
+                            setIsMenuOpen(false); 
+                          }}
                           className="w-full py-6 bg-accent flex items-center justify-center gap-4 rounded-3xl group shadow-[0_20px_40px_rgba(234,179,8,0.1)]"
                         >
                           <Download className="w-6 h-6 text-black group-hover:scale-110 transition-transform" />
@@ -705,6 +718,7 @@ export function Header() {
       </AnimatePresence>
 
       <CartDrawer isOpen={isCartOpen} onClose={() => setIsCartOpen(false)} />
+      <PWAInstallModal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} />
     </header>
   );
 }
@@ -717,10 +731,12 @@ export function Footer() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const { installPrompt, showInstallPrompt } = usePWAInstall();
+  const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
   return (
     <footer className="bg-background border-t border-white/10 py-16 px-4 relative">
+      <PWAInstallModal isOpen={isInstallModalOpen} onClose={() => setIsInstallModalOpen(false)} />
       {/* Back to Top */}
       <button 
         onClick={scrollToTop}
@@ -745,10 +761,14 @@ export function Footer() {
           <ul className="space-y-4 text-white/60 text-xs font-bold uppercase tracking-widest">
             <li><Link to="/shop" className="hover:text-white transition-colors">The Shop</Link></li>
             <li><Link to="/agent" className="hover:text-white transition-colors">Become Agent</Link></li>
+            <li><Link to="/orders" className="hover:text-white transition-colors">My Orders</Link></li>
             <li><Link to="/about" className="hover:text-white transition-colors">Our Ethos</Link></li>
             <li><Link to="/tos" className="hover:text-white transition-colors">Terms</Link></li>
-            {installPrompt && (
-              <li><button onClick={showInstallPrompt} className="text-accent underline decoration-accent/20 hover:text-white transition-colors">Install App</button></li>
+            {((installPrompt && !isInstalled) || isIOS) && (
+              <li><button onClick={() => {
+                if (isIOS) setIsInstallModalOpen(true);
+                else showInstallPrompt();
+              }} className="text-accent underline decoration-accent/20 hover:text-white transition-colors">Install App</button></li>
             )}
           </ul>
         </div>

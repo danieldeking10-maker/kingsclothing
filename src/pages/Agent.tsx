@@ -31,7 +31,9 @@ import {
   Terminal,
   Activity,
   Eye,
-  EyeOff
+  EyeOff,
+  Edit3,
+  Layers
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -44,6 +46,7 @@ import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
 import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
+import { DesignMetadataModal } from '../components/DesignMetadataModal';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -70,9 +73,10 @@ interface DesignAuthorityCardProps {
   handleUpdateAsset: (productId: string, file: File, type: 'mockupImage' | 'studioImage' | 'blueprintImage') => Promise<void>;
   handleUpdateProductStatus: (productId: string, newStatus: 'approved' | 'rejected') => Promise<void>;
   handleDeleteProduct: (productId: string) => Promise<void>;
+  onCalibrate: (product: any) => void;
 }
 
-const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpdatingAsset, handleUpdateAsset, handleUpdateProductStatus, handleDeleteProduct }) => {
+const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpdatingAsset, handleUpdateAsset, handleUpdateProductStatus, handleDeleteProduct, onCalibrate }) => {
   const [view, setView] = useState<'mockup' | 'studio' | 'blueprint'>('mockup');
   const updateInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -190,19 +194,28 @@ const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpd
          </div>
       </div>
 
-      <div className="mt-auto grid grid-cols-2 gap-3">
+      <div className="mt-auto space-y-3">
          <button 
-           onClick={() => handleUpdateProductStatus(design.id, 'approved')}
-           className="py-4 bg-accent text-black text-[9px] font-black uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-[0_10px_20px_rgba(242,125,38,0.2)]"
+           onClick={() => onCalibrate(design)}
+           className="w-full py-4 bg-white/10 text-white text-[9px] font-black uppercase tracking-widest rounded-xl border border-white/10 hover:bg-white/20 transition-all flex items-center justify-center gap-2"
          >
-           Sanctify
+           <Layers className="w-4 h-4" />
+           Calibrate Metadata
          </button>
-         <button 
-           onClick={() => handleDeleteProduct(design.id)}
-           className="py-4 bg-white/5 text-red-500 text-[9px] font-black uppercase tracking-widest rounded-xl border border-red-500/10 hover:bg-red-500 hover:text-white transition-all shadow-xl"
-         >
-           Purge
-         </button>
+         <div className="grid grid-cols-2 gap-3">
+            <button 
+              onClick={() => handleUpdateProductStatus(design.id, 'approved')}
+              className="py-4 bg-accent text-black text-[9px] font-black uppercase tracking-widest rounded-xl hover:scale-105 active:scale-95 transition-all shadow-[0_10px_20px_rgba(242,125,38,0.2)]"
+            >
+              Sanctify
+            </button>
+            <button 
+              onClick={() => handleDeleteProduct(design.id)}
+              className="py-4 bg-white/5 text-red-500 text-[9px] font-black uppercase tracking-widest rounded-xl border border-red-500/10 hover:bg-red-500 hover:text-white transition-all shadow-xl"
+            >
+              Purge
+            </button>
+         </div>
       </div>
     </motion.div>
   );
@@ -379,6 +392,8 @@ export function AgentPortal() {
   const [generatedPreview, setGeneratedPreview] = useState<string | null>(null);
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isUpdatingAsset, setIsUpdatingAsset] = useState(false);
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [selectedProductForMetadata, setSelectedProductForMetadata] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ownerFileInputRef = useRef<HTMLInputElement>(null);
   const ownerStudioInputRef = useRef<HTMLInputElement>(null);
@@ -2318,6 +2333,10 @@ export function AgentPortal() {
                             handleUpdateAsset={handleUpdateAsset}
                             handleUpdateProductStatus={handleUpdateProductStatus}
                             handleDeleteProduct={handleDeleteProduct}
+                            onCalibrate={(d) => {
+                              setSelectedProductForMetadata(d);
+                              setIsMetadataModalOpen(true);
+                            }}
                           />
                         ))
                       )}
@@ -2345,31 +2364,18 @@ export function AgentPortal() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
                     {allDesigns.filter(d => d.status === 'approved').slice(0, 12).map((design) => (
-                      <motion.div 
+                      <DesignAuthorityCard 
                         key={design.id}
-                        className="glass p-5 rounded-3xl border border-white/5 hover:border-accent/30 transition-all group relative"
-                      >
-                         <div className="aspect-square bg-black/40 rounded-2xl overflow-hidden mb-4 relative">
-                            <img 
-                             src={design.mockupImage} 
-                             alt="" 
-                             className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-grayscale duration-500" 
-                             referrerPolicy="no-referrer"
-                           />
-                            <div className="absolute top-2 right-2">
-                               <button 
-                                 onClick={() => handleDeleteProduct(design.id)}
-                                 className="p-2 rounded-lg bg-red-500/10 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:text-white"
-                               >
-                                  <Trash2 className="w-4 h-4" />
-                               </button>
-                            </div>
-                         </div>
-                         <div>
-                            <p className="text-[10px] font-black uppercase text-white truncate">{design.name}</p>
-                            <p className="text-[8px] font-black uppercase text-white/20 tracking-tighter italic">by {design.agentName || 'Master'}</p>
-                         </div>
-                      </motion.div>
+                        design={design}
+                        isUpdatingAsset={isUpdatingAsset}
+                        handleUpdateAsset={handleUpdateAsset}
+                        handleUpdateProductStatus={handleUpdateProductStatus}
+                        handleDeleteProduct={handleDeleteProduct}
+                        onCalibrate={(d) => {
+                          setSelectedProductForMetadata(d);
+                          setIsMetadataModalOpen(true);
+                        }}
+                      />
                     ))}
                     {allDesigns.filter(d => d.status === 'approved').length > 12 && (
                       <div className="col-span-full text-center py-4">
@@ -3545,6 +3551,11 @@ export function AgentPortal() {
           </section>
         )}
       </div>
+      <DesignMetadataModal 
+        isOpen={isMetadataModalOpen} 
+        onClose={() => setIsMetadataModalOpen(false)} 
+        product={selectedProductForMetadata} 
+      />
     </main>
   );
 }

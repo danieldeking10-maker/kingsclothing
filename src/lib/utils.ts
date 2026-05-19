@@ -5,9 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const ghcFormatter = new Intl.NumberFormat('en-GH', {
+  style: 'currency',
+  currency: 'GHS',
+});
+
 export function formatGHC(amount: number) {
-  return new Intl.NumberFormat('en-GH', {
-    style: 'currency',
-    currency: 'GHS',
-  }).format(amount).replace('GHS', 'GHC');
+  return ghcFormatter.format(amount).replace('GHS', '₵');
 }

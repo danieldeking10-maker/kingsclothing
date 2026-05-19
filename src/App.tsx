@@ -12,6 +12,7 @@ import { Header, Footer } from "./components/Navigation";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initGlobalErrorHandlers } from "./lib/errorReporting";
 import { useEffect, lazy, Suspense } from "react";
+import { ProgressBar } from "./components/ui/ProgressBar";
 
 // Lazy-loaded pages for optimized transition and initial load speed
 const HomePage = lazy(() => import("./pages/Home").then(m => ({ default: m.HomePage })));
@@ -22,6 +23,7 @@ const AuthPage = lazy(() => import("./pages/Auth").then(m => ({ default: m.AuthP
 const AboutPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.AboutPage })));
 const TOSPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.TOSPage })));
 const OrderConfirmationPage = lazy(() => import("./pages/OrderConfirmation").then(m => ({ default: m.OrderConfirmationPage })));
+const OrdersPage = lazy(() => import("./pages/Orders").then(m => ({ default: m.OrdersPage })));
 
 // Global loading skeleton for routes
 const PageLoader = () => (
@@ -42,6 +44,7 @@ export default function App() {
       <AuthProvider>
         <CartProvider>
           <div className="min-h-screen flex flex-col font-sans selection:bg-accent selection:text-black bg-background text-white">
+            <ProgressBar />
             <Header />
             <main className="flex-grow">
               <Suspense fallback={<PageLoader />}>
@@ -55,6 +58,7 @@ export default function App() {
                     <Route path="/about" element={<AboutPage />} />
                     <Route path="/tos" element={<TOSPage />} />
                     <Route path="/order/:id" element={<OrderConfirmationPage />} />
+                    <Route path="/orders" element={<OrdersPage />} />
                   </Routes>
                 </AnimatePresence>
               </Suspense>

@@ -31,6 +31,16 @@ export function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getPasswordStrength = () => {
+    if (!password) return 0;
+    let strength = 0;
+    if (password.length >= 8) strength += 25;
+    if (/[A-Z]/.test(password)) strength += 25;
+    if (/[0-9]/.test(password)) strength += 25;
+    if (/[^A-Za-z0-9]/.test(password)) strength += 25;
+    return strength;
+  };
+
   // Sync state with URL if it changes
   useEffect(() => {
     setIsSignUp(searchMode === 'signup');
@@ -217,6 +227,22 @@ export function AuthPage() {
 
             <form onSubmit={handleEmailAuth} className="space-y-6">
               <AnimatePresence mode="wait">
+                {referralId && isSignUp && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-4 bg-accent/10 border border-accent/20 rounded-2xl flex items-center gap-3 text-accent mb-6"
+                  >
+                    <Crown className="w-4 h-4 shrink-0" />
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">Referral Link Validated</p>
+                      <p className="text-[8px] font-medium uppercase tracking-tighter opacity-60">You are entering via invitation</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <AnimatePresence mode="wait">
                 {isLoading && (
                   <motion.div 
                     initial={{ opacity: 0 }}
@@ -339,6 +365,42 @@ export function AuthPage() {
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+                  
+                  {isSignUp && password.length > 0 && (
+                    <motion.div 
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      className="space-y-2 mt-2 px-4"
+                    >
+                      <div className="flex justify-between items-center text-[8px] font-black uppercase tracking-widest text-white/20 mb-1">
+                        <span>Entropy Grade</span>
+                        <span className={cn(
+                          getPasswordStrength() <= 25 ? "text-red-500" :
+                          getPasswordStrength() <= 50 ? "text-orange-500" :
+                          getPasswordStrength() <= 75 ? "text-yellow-500" :
+                          "text-green-500"
+                        )}>
+                          {getPasswordStrength() <= 25 ? 'CRITICAL' : 
+                           getPasswordStrength() <= 50 ? 'WEAK' : 
+                           getPasswordStrength() <= 75 ? 'STABLE' : 'UNBREAKABLE'}
+                        </span>
+                      </div>
+                      <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          className={cn(
+                            "h-full transition-all duration-500",
+                            getPasswordStrength() <= 25 ? "bg-red-500" :
+                            getPasswordStrength() <= 50 ? "bg-orange-500" :
+                            getPasswordStrength() <= 75 ? "bg-yellow-500" :
+                            "bg-green-500"
+                          )}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${getPasswordStrength()}%` }}
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+
                   {!isSignUp && (
                     <button 
                       type="button"

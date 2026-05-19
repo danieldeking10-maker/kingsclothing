@@ -6,6 +6,8 @@ import { collection, query, limit, getDocs, orderBy, where } from 'firebase/fire
 import { db } from '../lib/firebase';
 import { formatGHC } from '@/src/lib/utils';
 import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
+import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
+import { ErrorBoundary } from '@/src/components/ErrorBoundary';
 
 const getPrice = (product: any): number => {
   const category = product.category;
@@ -176,40 +178,40 @@ export function HomePage() {
               ))
             ) : (
               trendingDesigns.map((item, idx) => (
-                <motion.div
-                  key={item.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  whileInView={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.1 }}
-                  viewport={{ once: true }}
-                  className="group cursor-pointer"
-                >
-                  <div className="aspect-[4/5] bg-[#1A1A1B] mb-6 relative overflow-hidden rounded-2xl grayscale hover:grayscale-0 transition-all duration-700">
-                    <img 
-                      src={item.mockupImage} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000"
-                      referrerPolicy="no-referrer"
-                    />
-                    {idx === 0 && (
-                      <div className="absolute bottom-4 left-4 bg-accent text-[8px] px-3 py-1 font-black uppercase text-black tracking-widest">
-                        TRENDING
+                <ErrorBoundary key={item.id}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.1 }}
+                    viewport={{ once: true }}
+                    className="group cursor-pointer"
+                  >
+                    <div className="aspect-[4/5] bg-[#1A1A1B] mb-6 relative overflow-hidden rounded-2xl grayscale hover:grayscale-0 transition-all duration-700">
+                      <EnhancedImage 
+                        src={item.mockupImage} 
+                        alt={item.name} 
+                        className="group-hover:scale-105 transition-transform duration-1000"
+                      />
+                      {idx === 0 && (
+                        <div className="absolute bottom-4 left-4 bg-accent text-[8px] px-3 py-1 font-black uppercase text-black tracking-widest">
+                          TRENDING
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-6">
+                          <Link to={`/product/${item.id}`} className="w-full bg-white text-black py-4 rounded-full text-[10px] font-black uppercase tracking-widest text-center">
+                            View Blueprint
+                          </Link>
                       </div>
-                    )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-6">
-                        <Link to={`/product/${item.id}`} className="w-full bg-white text-black py-4 rounded-full text-[10px] font-black uppercase tracking-widest text-center">
-                          View Blueprint
-                        </Link>
                     </div>
-                  </div>
-                  <div className="flex justify-between items-start">
-                    <div className="space-y-1">
-                      <h4 className="text-sm font-display font-black uppercase italic tracking-tight group-hover:text-accent transition-colors">{item.name}</h4>
-                      <p className="text-[9px] text-white/30 uppercase font-black tracking-widest">{item.category} • {(item.gsmOptions && item.gsmOptions[0]) || '260'} GSM</p>
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <h4 className="text-sm font-display font-black uppercase italic tracking-tight group-hover:text-accent transition-colors">{item.name}</h4>
+                        <p className="text-[9px] text-white/30 uppercase font-black tracking-widest">{item.category} • {(item.gsmOptions && item.gsmOptions[0]) || '260'} GSM</p>
+                      </div>
+                      <span className="text-xs font-mono font-black text-accent">{formatGHC(getPrice(item))}</span>
                     </div>
-                    <span className="text-xs font-mono font-black text-accent">{formatGHC(getPrice(item))}</span>
-                  </div>
-                </motion.div>
+                  </motion.div>
+                </ErrorBoundary>
               ))
             )}
             {!loading && trendingDesigns.length === 0 && (

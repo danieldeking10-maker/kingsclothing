@@ -247,18 +247,21 @@ export function ProductPage() {
   const price = useMemo(() => {
     let finalPrice = basePrice;
     
-    // Apply Global Promotion
-    if (activePromotion) {
+    // 0. Product Specific Sale Protocol
+    if (product?.isOnSale && product?.salePrice) {
+      finalPrice = product.salePrice;
+    } else if (activePromotion) {
+      // Apply Global Promotion if no direct product sale
       finalPrice = finalPrice * (1 - (activePromotion.discountPercentage / 100));
     }
     
-    // Apply Coupon
+    // Apply Coupon (Stackable by protocol design)
     if (appliedCoupon) {
       finalPrice = finalPrice * (1 - (appliedCoupon.discountPercentage / 100));
     }
     
     return finalPrice;
-  }, [basePrice, activePromotion, appliedCoupon]);
+  }, [basePrice, activePromotion, appliedCoupon, product?.isOnSale, product?.salePrice]);
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
@@ -1146,7 +1149,7 @@ export function ProductPage() {
                      <h2 className="text-6xl font-display font-black text-white italic tracking-tighter group-hover:text-accent transition-colors">
                        {formatGHC(price)}
                      </h2>
-                     {(activePromotion || appliedCoupon) && (
+                     {(activePromotion || appliedCoupon || product?.isOnSale) && (
                        <p className="text-xl font-mono font-bold text-white/20 line-through">
                          {formatGHC(basePrice)}
                        </p>
@@ -1615,6 +1618,11 @@ export function ProductPage() {
             <div className="flex items-center gap-4">
               <div className="flex-1">
                 <p className="text-[10px] font-black uppercase text-white truncate">{product.name}</p>
+                {product?.isOnSale && (
+                  <p className="text-[8px] font-mono font-bold text-white/20 line-through">
+                    {formatGHC(basePrice)}
+                  </p>
+                )}
                 <p className="text-[12px] font-mono font-black text-accent">{formatGHC(price)}</p>
               </div>
               <button
