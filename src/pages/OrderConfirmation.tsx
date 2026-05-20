@@ -23,7 +23,6 @@ import {
 import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
-import { usePaystackPayment } from 'react-paystack';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
@@ -72,16 +71,6 @@ export function OrderConfirmationPage() {
 
   const [isAlerting, setIsAlerting] = useState(false);
 
-  const paystackConfig = {
-    reference: order?.id || '',
-    email: user?.email || order?.customerEmail || 'customer@example.com',
-    amount: (order?.depositAmount || 0) * 100, // Paystack amount is in kobo/pesewas
-    publicKey: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
-    currency: 'GHS',
-  };
-
-  const initializePayment = usePaystackPayment(paystackConfig);
-
   const handlePaystackSuccess = async (reference: any) => {
     console.log('Payment Success:', reference);
     toast.success('Payment Received Successfully');
@@ -118,11 +107,21 @@ export function OrderConfirmationPage() {
 
     setIsPinPromptOpen(false);
     
-    // Proceed to actual Paystack initialization
-    initializePayment({
-      onSuccess: handlePaystackSuccess,
-      onClose: handlePaystackClose,
-    });
+    try {
+      const handler = (window as any).PaystackPop.setup({
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
+        reference: order?.id || '',
+        email: user?.email || order?.customerEmail || 'customer@example.com',
+        amount: Math.round((order?.depositAmount || 0) * 100),
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        callback: handlePaystackSuccess,
+        onClose: handlePaystackClose,
+      });
+      handler.openIframe();
+    } catch (error: any) {
+      toast.error('Payment gateway unavailable: ' + (error?.message || 'Please try again.'));
+    }
   };
 
   const handleKeyClick = (num: string) => {

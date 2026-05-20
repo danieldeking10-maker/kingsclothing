@@ -46,10 +46,19 @@ export function ShopPage() {
   const [selectedColor, setSelectedColor] = useState('All');
   const [selectedGSM, setSelectedGSM] = useState('All');
   const [showOnlySale, setShowOnlySale] = useState(false);
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 1000]);
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 10000]);
   const [sortBy, setSortBy] = useState(sortParam);
   const [loading, setLoading] = useState(true);
   const [displayLimit, setDisplayLimit] = useState(12);
+
+  const resetFilters = () => {
+    setSelectedCategory('All');
+    setSelectedColor('All');
+    setSelectedGSM('All');
+    setShowOnlySale(false);
+    setPriceRange([0, 10000]);
+    setDisplayLimit(12);
+  };
 
   useEffect(() => {
     setSortBy(sortParam);
@@ -111,6 +120,20 @@ export function ShopPage() {
       return 0;
     });
   }, [products, search, selectedCategory, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy]);
+
+  const activeFilters = useMemo(() => {
+    const filters: string[] = [];
+    if (selectedCategory !== 'All') filters.push(selectedCategory);
+    if (selectedColor !== 'All') filters.push(selectedColor);
+    if (selectedGSM !== 'All') filters.push(`${selectedGSM} GSM`);
+    if (showOnlySale) filters.push('Sale Items');
+    if (priceRange[0] > 0 || priceRange[1] < 10000) {
+      if (priceRange[0] === 0) filters.push(`Under ${formatGHC(priceRange[1])}`);
+      else if (priceRange[1] >= 10000) filters.push(`Over ${formatGHC(priceRange[0])}`);
+      else filters.push(`${formatGHC(priceRange[0])} - ${formatGHC(priceRange[1])}`);
+    }
+    return filters;
+  }, [selectedCategory, selectedColor, selectedGSM, showOnlySale, priceRange]);
 
   const isNew = (createdAt: any) => {
     if (!createdAt) return false;
@@ -186,6 +209,32 @@ export function ShopPage() {
 
         {/* Filters & Sorting */}
         <div className="flex flex-col space-y-12 mb-16">
+          {activeFilters.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[9px] font-black uppercase tracking-editorial text-white/25">Active Scan</span>
+                {activeFilters.map(filter => (
+                  <span
+                    key={filter}
+                    className="rounded-full border border-accent/30 bg-accent/10 px-4 py-2 text-[8px] font-black uppercase tracking-widest text-accent"
+                  >
+                    {filter}
+                  </span>
+                ))}
+              </div>
+              <button
+                onClick={resetFilters}
+                className="self-start sm:self-auto rounded-full border border-white/10 px-5 py-2 text-[8px] font-black uppercase tracking-widest text-white/40 transition-all hover:border-accent hover:text-accent"
+              >
+                Clear Filters
+              </button>
+            </motion.div>
+          )}
+
           {/* Price & Sort Row */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
                 <div className="flex flex-wrap items-center gap-4">
@@ -351,12 +400,7 @@ export function ShopPage() {
             </div>
             <h2 className="text-3xl font-display font-black uppercase italic text-white/20">Empty Blueprint Section</h2>
             <button 
-              onClick={() => { 
-                setSelectedCategory('All'); 
-                setSelectedColor('All');
-                setSelectedGSM('All');
-                setPriceRange([0, 10000]);
-              }}
+              onClick={resetFilters}
               className="px-10 py-4 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-full hover:scale-105 transition-transform"
             >
               RESET SCAN
@@ -367,4 +411,3 @@ export function ShopPage() {
     </div>
   );
 }
-
