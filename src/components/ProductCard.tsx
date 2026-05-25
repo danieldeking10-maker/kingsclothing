@@ -206,7 +206,7 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
              <div className="px-3 py-1 flex items-center space-x-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-accent" />
                 <p className="text-[8px] font-black uppercase tracking-widest text-white">
-                  {product.category} Collection
+                  {product.category}{product.gender ? ` • ${product.gender}` : ' • unisex'}
                 </p>
                 {isNew && (
                   <span className="ml-2 bg-accent text-black text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">NEW</span>

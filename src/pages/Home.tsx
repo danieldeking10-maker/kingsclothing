@@ -34,25 +34,57 @@ export function HomePage() {
   useEffect(() => {
     const fetchTrending = async () => {
       try {
-        // Fetch products ordered by salesCount (denormalized field tracking orders)
-        const trendingSnap = await getDocs(query(
-          collection(db, 'products'),
-          where('status', '==', 'approved'),
-          orderBy('salesCount', 'desc'),
-          limit(4)
-        ));
+        let designs: any[] = [];
+        let trendingSnap;
 
-        let designs = trendingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Fetch products ordered by salesCount
+        try {
+          trendingSnap = await getDocs(query(
+            collection(db, 'products'),
+            where('status', '==', 'approved'),
+            orderBy('salesCount', 'desc'),
+            limit(4)
+          ));
+          designs = trendingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (indexError) {
+          console.warn('Trending products index fallback triggered:', indexError);
+          // Fallback to simpler index-free fetching + local sorting to prevent blockage
+          const baseSnap = await getDocs(query(
+            collection(db, 'products'),
+            where('status', '==', 'approved'),
+            limit(30)
+          ));
+          designs = baseSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+          designs.sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
+          designs = designs.slice(0, 4);
+        }
 
         // If not enough trending, fill with newest approved
         if (designs.length < 2) {
-          const newestSnap = await getDocs(query(
-            collection(db, 'products'),
-            where('status', '==', 'approved'),
-            orderBy('createdAt', 'desc'),
-            limit(4)
-          ));
-          const newest = newestSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          let newest: any[] = [];
+          try {
+            const newestSnap = await getDocs(query(
+              collection(db, 'products'),
+              where('status', '==', 'approved'),
+              orderBy('createdAt', 'desc'),
+              limit(4)
+            ));
+            newest = newestSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (newestError) {
+            console.warn('Newest products index fallback triggered:', newestError);
+            const baseSnap = await getDocs(query(
+              collection(db, 'products'),
+              where('status', '==', 'approved'),
+              limit(30)
+            ));
+            newest = baseSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+            newest.sort((a, b) => {
+              const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+              const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+              return timeB - timeA;
+            });
+            newest = newest.slice(0, 4);
+          }
           
           // Merge avoiding duplicates
           newest.forEach(p => {

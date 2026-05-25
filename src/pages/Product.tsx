@@ -122,6 +122,7 @@ export function ProductPage() {
   const [isVeoOpen, setIsVeoOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
+  const [isSpecsModalOpen, setIsSpecsModalOpen] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [promotions, setPromotions] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
@@ -268,7 +269,6 @@ export function ProductPage() {
     if (!couponCode.trim()) return;
     
     try {
-      const { getDocs } = await import('firebase/firestore');
       const q = query(
         collection(db, 'coupons'), 
         where('code', '==', couponCode.toUpperCase()), 
@@ -973,7 +973,7 @@ export function ProductPage() {
             <div className="mb-12 relative">
               <div className="flex items-center gap-4 mb-4">
                 <span className="text-accent text-[10px] font-black uppercase tracking-editorial block">
-                    {product.category} Series
+                    {product.category} Series • {product.gender || 'unisex'}
                 </span>
                 {reviews.length > 0 && (
                   <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
@@ -1302,7 +1302,13 @@ export function ProductPage() {
                 <div className="lg:min-w-[240px]">
                    <div className="flex justify-between items-center mb-6">
                       <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Structural Sizing</label>
-                      <button className="text-[8px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all italic">Blueprint Specs</button>
+                      <button 
+                        onClick={() => setIsSpecsModalOpen(true)}
+                        type="button"
+                        className="text-[8px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all italic text-left"
+                      >
+                        Blueprint Specs
+                      </button>
                    </div>
                    <div className="flex flex-wrap gap-3">
                       {SIZES.map(size => (
@@ -1868,6 +1874,145 @@ export function ProductPage() {
                      </button>
                   </div>
                </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Blueprint Sizing & Fabric Specification Manual */}
+      <AnimatePresence>
+        {isSpecsModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 md:p-6 overflow-y-auto"
+            onClick={() => setIsSpecsModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 30 }}
+              className="glass p-8 md:p-12 rounded-[3rem] w-full max-w-4xl border border-white/10 relative my-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => setIsSpecsModalOpen(false)}
+                className="absolute top-8 right-8 text-white/30 hover:text-white transition-colors bg-white/5 p-3 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="mb-8 md:mb-12">
+                <span className="text-accent text-[10px] font-black uppercase tracking-[0.3em] mb-3 block">Legion Standard Manual</span>
+                <h3 className="text-4xl md:text-5xl font-display font-light italic text-white leading-none">
+                  Sizing & <span className="font-sans font-bold not-italic text-accent">Fabric Specifications.</span>
+                </h3>
+                <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mt-2">{product?.category || "T-Shirts"} Engineering Blueprint & Fit Matrix</p>
+              </div>
+
+              {/* Grid Content */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                {/* Specs Table */}
+                <div className="lg:col-span-7 space-y-6">
+                  <div className="flex items-center space-x-2">
+                    <Grid3X3 className="w-4 h-4 text-accent" />
+                    <h4 className="text-[11px] font-black uppercase tracking-editorial text-white/60">Garment Measurement Grid</h4>
+                  </div>
+                  <div className="overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02]">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-white/15 bg-white/5 text-[9px] font-black uppercase tracking-widest text-white/40">
+                          <th className="py-4 px-6">Size Metric</th>
+                          <th className="py-4 px-4 text-center">S</th>
+                          <th className="py-4 px-4 text-center">M</th>
+                          <th className="py-4 px-4 text-center">L</th>
+                          <th className="py-4 px-4 text-center">XL</th>
+                          <th className="py-4 px-4 text-center">XXL</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-[10px] font-mono divide-y divide-white/5 text-white/80">
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Chest (W)</td>
+                          <td className="py-4 px-4 text-center">52 cm</td>
+                          <td className="py-4 px-4 text-center">55 cm</td>
+                          <td className="py-4 px-4 text-center">58 cm</td>
+                          <td className="py-4 px-4 text-center">61 cm</td>
+                          <td className="py-4 px-4 text-center">64 cm</td>
+                        </tr>
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Length (L)</td>
+                          <td className="py-4 px-4 text-center">70 cm</td>
+                          <td className="py-4 px-4 text-center">72 cm</td>
+                          <td className="py-4 px-4 text-center">74 cm</td>
+                          <td className="py-4 px-4 text-center">76 cm</td>
+                          <td className="py-4 px-4 text-center">78 cm</td>
+                        </tr>
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Sleeve (S)</td>
+                          <td className="py-4 px-4 text-center">21 cm</td>
+                          <td className="py-4 px-4 text-center">22 cm</td>
+                          <td className="py-4 px-4 text-center">23 cm</td>
+                          <td className="py-4 px-4 text-center">24 cm</td>
+                          <td className="py-4 px-4 text-center">25 cm</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-[8px] text-white/30 uppercase font-black tracking-widest italic pl-2">
+                    * Fits slightly oversized for premium streetwear draping. Pick your regular size for standard boxy fit, or size down for tailored fit.
+                  </p>
+                </div>
+
+                {/* Fabric Weight Specs */}
+                <div className="lg:col-span-5 space-y-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-accent" />
+                      <h4 className="text-[11px] font-black uppercase tracking-editorial text-white/60">GSM weight index</h4>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">230 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-white/10 text-white/60 px-2 py-0.5 rounded tracking-widest uppercase">PRECISION</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">Lightweight & breathable knit weave optimized structured efficiency under warm Accra skies.</p>
+                      </div>
+
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">260 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-accent/20 text-accent px-2 py-0.5 rounded tracking-widest uppercase">COMMAND</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">Premium heavyweight build providing structured posture drop, comfort, and standard command presence.</p>
+                      </div>
+
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">320 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-white text-black px-2 py-0.5 rounded tracking-widest uppercase">ARMOR</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">The signature Ultima heavy knit drape. Absolute density shielding, incredible texture depth and long-term frame retention.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Garment Care Manual */}
+                  <div className="bg-accent/5 rounded-[2rem] p-6 border border-accent/10 space-y-3">
+                    <div className="flex items-center space-x-2 text-accent">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">Garment Longevity Code</span>
+                    </div>
+                    <ul className="text-[9px] font-bold text-white/60 uppercase tracking-tight space-y-2 list-none pl-1">
+                      <li>• COLD WASH ONLY (Inside out)</li>
+                      <li>• AIR DRY (Never tumble dry premium drapes)</li>
+                      <li>• IRON STEAM ONLY (Avoid print designs directly)</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}

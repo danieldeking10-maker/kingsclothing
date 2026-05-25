@@ -1,7 +1,10 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, setLogLevel } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 import firebaseConfig from '@/firebase-applet-config.json';
+
+// Disable chatty Firestore sync or clock-desync warning messages
+setLogLevel('error');
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -20,10 +23,10 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Test connection as suggested in system instructions
+// Test connection as suggested in system instructions (deferred to prevent locking loader)
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'system', 'connection-test'));
+    await getDocFromServer(doc(db, 'test', 'connection'));
     console.log("Firebase connection established.");
   } catch (error: any) {
     if (error.message?.includes('the client is offline')) {
@@ -32,4 +35,6 @@ async function testConnection() {
   }
 }
 
-testConnection();
+if (typeof window !== 'undefined') {
+  setTimeout(testConnection, 2000);
+}

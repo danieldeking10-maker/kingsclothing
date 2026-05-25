@@ -337,6 +337,7 @@ export function AgentPortal() {
     description: '',
     basePrice: 150,
     category: 'T-Shirts',
+    gender: 'unisex' as 'male' | 'female' | 'unisex',
     isPrivate: true,
     allowedColors: FABRIC_COLORS.map(c => c.name),
     gsmOptions: ['260'] as GSM[],
@@ -469,6 +470,7 @@ export function AgentPortal() {
       await addDoc(collection(db, 'products'), {
         name: genPrompt.slice(0, 20) + '...',
         category: 'T-Shirts',
+        gender: 'unisex',
         description: `AI Generated concept: ${genPrompt}`,
         basePrice: 150,
         status: 'pending',
@@ -527,27 +529,63 @@ export function AgentPortal() {
     if (!user) return;
     
     // Fetch user's designs
+    let unsubscribeDesigns = () => {};
+    let unsubscribeDesignsSimple = () => {};
     const qDesigns = query(
       collection(db, 'products'), 
       where('agentId', '==', user.uid),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
-    const unsubscribeDesigns = onSnapshot(qDesigns, (snapshot) => {
+    unsubscribeDesigns = onSnapshot(qDesigns, (snapshot) => {
       const designs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyDesigns(designs);
+    }, (error) => {
+      console.warn("qDesigns query failed (possibly missing composite index on products), falling back locally:", error);
+      const qDesignsSimple = query(
+        collection(db, 'products'),
+        where('agentId', '==', user.uid),
+        limit(100)
+      );
+      unsubscribeDesignsSimple = onSnapshot(qDesignsSimple, (snapshot) => {
+        const designs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        designs.sort((a, b) => {
+          const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+          const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+          return timeB - timeA;
+        });
+        setMyDesigns(designs.slice(0, 50));
+      });
     });
 
     // Fetch user's orders
+    let unsubscribeOrders = () => {};
+    let unsubscribeOrdersSimple = () => {};
     const qOrders = query(
       collection(db, 'orders'), 
       where('customerId', '==', user.uid),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
-    const unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
+    unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
       const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyOrders(orders);
+    }, (error) => {
+      console.warn("qOrders query failed (possibly missing composite index on orders), falling back locally:", error);
+      const qOrdersSimple = query(
+        collection(db, 'orders'),
+        where('customerId', '==', user.uid),
+        limit(100)
+      );
+      unsubscribeOrdersSimple = onSnapshot(qOrdersSimple, (snapshot) => {
+        const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        orders.sort((a, b) => {
+          const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+          const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+          return timeB - timeA;
+        });
+        setMyOrders(orders.slice(0, 50));
+      });
     });
 
     // Fetch referred agents
@@ -644,7 +682,9 @@ export function AgentPortal() {
 
     return () => {
       unsubscribeDesigns();
+      unsubscribeDesignsSimple();
       unsubscribeOrders();
+      unsubscribeOrdersSimple();
       unsubscribeReferred();
       unsubscribePayouts();
       unsubscribeReferrals();
@@ -912,6 +952,7 @@ export function AgentPortal() {
       await addDoc(collection(db, 'products'), {
         name: ownerForm.name,
         category: ownerForm.category,
+        gender: ownerForm.gender || 'unisex',
         description: ownerForm.description || 'Authorized Brand Owner Submission',
         basePrice: Number(ownerForm.basePrice),
         status: 'approved',
@@ -940,6 +981,7 @@ export function AgentPortal() {
           description: '',
           basePrice: 150,
           category: 'T-Shirts',
+          gender: 'unisex',
           isPrivate: true,
           allowedColors: FABRIC_COLORS.map(c => c.name),
           gsmOptions: ['260'] as GSM[],
@@ -1224,6 +1266,7 @@ export function AgentPortal() {
         await addDoc(collection(db, 'products'), {
           name: result.suggestedName || 'Streetwear Concept',
           category: result.category || 'T-Shirts',
+          gender: 'unisex',
           description: result.reasoning,
           basePrice: 150,
           status: 'pending',
@@ -1608,7 +1651,7 @@ export function AgentPortal() {
                                    <p className="text-white text-lg font-black uppercase italic tracking-tighter leading-none truncate">{design.name}</p>
                                    <div className="flex items-center justify-between">
                                       <p className="text-accent font-mono font-black text-xs">{formatGHC(design.basePrice || 150)}</p>
-                                      <span className="text-[8px] font-black uppercase text-white/20 tracking-widest">{design.category}</span>
+                                      <span className="text-[8px] font-black uppercase text-white/20 tracking-widest">{design.category} • {design.gender || 'unisex'}</span>
                                    </div>
                                 </div>
                              </div>
@@ -1704,7 +1747,7 @@ export function AgentPortal() {
                     </div>
                     
                     <div className="space-y-8">
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                           <div className="space-y-3">
                              <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Blueprint Identity</label>
                              <input 
@@ -1728,6 +1771,18 @@ export function AgentPortal() {
                                <option value="Accessories">Accessories</option>
                                <option value="Exclusive">Exclusive</option>
                                <option value="Streetwear">Streetwear</option>
+                             </select>
+                          </div>
+                          <div className="space-y-3">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Gender Classification</label>
+                             <select 
+                               value={ownerForm.gender}
+                               onChange={(e) => setOwnerForm({...ownerForm, gender: e.target.value as any})}
+                               className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 text-sm font-bold uppercase tracking-tight focus:border-accent focus:bg-white outline-none appearance-none cursor-pointer transition-all"
+                             >
+                               <option value="unisex">Unisex</option>
+                               <option value="male">Male</option>
+                               <option value="female">Female</option>
                              </select>
                           </div>
                        </div>

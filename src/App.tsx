@@ -22,6 +22,8 @@ const AgentPortal = lazy(() => import("./pages/Agent").then(m => ({ default: m.A
 const AuthPage = lazy(() => import("./pages/Auth").then(m => ({ default: m.AuthPage })));
 const AboutPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.AboutPage })));
 const TOSPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.TOSPage })));
+const FAQPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.FAQPage })));
+const SizeGuidePage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.SizeGuidePage })));
 const OrderConfirmationPage = lazy(() => import("./pages/OrderConfirmation").then(m => ({ default: m.OrderConfirmationPage })));
 const OrdersPage = lazy(() => import("./pages/Orders").then(m => ({ default: m.OrdersPage })));
 
@@ -57,6 +59,8 @@ export default function App() {
                     <Route path="/auth" element={<AuthPage />} />
                     <Route path="/about" element={<AboutPage />} />
                     <Route path="/tos" element={<TOSPage />} />
+                    <Route path="/faq" element={<FAQPage />} />
+                    <Route path="/size-guide" element={<SizeGuidePage />} />
                     <Route path="/order/:id" element={<OrderConfirmationPage />} />
                     <Route path="/orders" element={<OrdersPage />} />
                   </Routes>

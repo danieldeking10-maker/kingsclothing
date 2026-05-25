@@ -4,6 +4,7 @@ export interface Product {
   id: string;
   name: string;
   category: string;
+  gender?: 'male' | 'female' | 'unisex';
   basePrice: number;
   gsmPrices?: Record<string, number>;
   colors: string[];

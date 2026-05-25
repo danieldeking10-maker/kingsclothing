@@ -5,7 +5,7 @@ import { useCart } from '../lib/CartContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTransaction } from 'firebase/firestore';
+import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTransaction, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
@@ -29,7 +29,6 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
     try {
-      const { query, where, collection, getDocs } = await import('firebase/firestore');
       const q = query(
         collection(db, 'coupons'), 
         where('code', '==', couponCode.toUpperCase()), 

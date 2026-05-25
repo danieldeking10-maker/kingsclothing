@@ -23,7 +23,6 @@ import {
 import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
-import { usePaystackPayment } from 'react-paystack';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
@@ -45,15 +44,13 @@ export function OrderConfirmationPage() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isPinPromptOpen, setIsPinPromptOpen] = useState(false);
-  const [momoPin, setMomoPin] = useState('');
   const [trackId, setTrackId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'momo' | 'bank'>('momo');
 
   const handleTrack = (e: React.FormEvent) => {
     e.preventDefault();
     if (!trackId.trim()) return;
-    navigate(`/order/${trackId.trim().toUpperCase()}`);
+    navigate(`/orders?track=${trackId.trim()}`);
     setTrackId('');
   };
 
@@ -72,67 +69,53 @@ export function OrderConfirmationPage() {
 
   const [isAlerting, setIsAlerting] = useState(false);
 
-  const paystackConfig = {
-    reference: order?.id || '',
-    email: user?.email || order?.customerEmail || 'customer@example.com',
-    amount: (order?.depositAmount || 0) * 100, // Paystack amount is in kobo/pesewas
-    publicKey: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
-    currency: 'GHS',
-  };
-
-  const initializePayment = usePaystackPayment(paystackConfig);
-
-  const handlePaystackSuccess = async (reference: any) => {
-    console.log('Payment Success:', reference);
-    toast.success('Payment Received Successfully');
-    // Save payment method and confirm
-    if (id) {
-       await updateDoc(doc(db, 'orders', id), {
-         paymentMethod: 'momo',
-         paystackReference: reference.reference || reference.id || 'N/A'
-       });
-    }
-    await handleConfirmPayment();
-  };
-
-  const handlePaystackClose = () => {
-    toast.error('Payment Window Closed');
-  };
-
   const handleTriggerAlert = () => {
     if (!user?.email && !order?.customerEmail) {
       toast.error('Customer email required for Paystack');
       return;
     }
     
-    // Open the PIN simulation prompt first
-    setMomoPin('');
-    setIsPinPromptOpen(true);
-  };
+    setIsAlerting(true);
+    const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
-  const handlePinSubmit = () => {
-    if (momoPin.length < 4) {
-      toast.error('Invalid PIN Protocol');
-      return;
+    try {
+      const config = {
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
+        email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
+        amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        ref: order?.id || '',
+        callback: async (response: any) => {
+          toast.dismiss(loadingToast);
+          toast.success('Payment Received Successfully');
+          setIsAlerting(false);
+          if (id) {
+             try {
+                await updateDoc(doc(db, 'orders', id), {
+                  paymentMethod: 'momo',
+                  paystackReference: response.reference || response.id || 'N/A'
+                });
+             } catch (dbErr) {
+                console.error("Failed to update payment details on document:", dbErr);
+             }
+          }
+          await handleConfirmPayment();
+        },
+        onClose: () => {
+          setIsAlerting(false);
+          toast.dismiss(loadingToast);
+          toast.error('Transaction Terminated by User');
+        }
+      };
+
+      const handler = (window as any).PaystackPop.setup(config);
+      handler.openIframe();
+    } catch (error: any) {
+      toast.dismiss(loadingToast);
+      toast.error('Terminal Error: ' + error.message);
+      setIsAlerting(false);
     }
-
-    setIsPinPromptOpen(false);
-    
-    // Proceed to actual Paystack initialization
-    initializePayment({
-      onSuccess: handlePaystackSuccess,
-      onClose: handlePaystackClose,
-    });
-  };
-
-  const handleKeyClick = (num: string) => {
-    if (momoPin.length < 6) {
-      setMomoPin(prev => prev + num);
-    }
-  };
-
-  const handleKeyBackspace = () => {
-    setMomoPin(prev => prev.slice(0, -1));
   };
 
   const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
@@ -468,6 +451,20 @@ export function OrderConfirmationPage() {
                    </div>
                  );
                })}
+            </div>
+
+            <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-1">
+                 <p className="text-[10.5px] font-black uppercase tracking-widest text-accent animate-pulse">Advanced Logistics Telemetry Online</p>
+                 <p className="text-[9px] font-semibold uppercase tracking-wide text-white/40">Open the secure log to inspect shipping carriers, download digital receipt blueprints, or locate delivery ports.</p>
+              </div>
+              <Link 
+                to={`/orders?track=${order.id}`}
+                className="px-6 py-3.5 bg-accent text-black text-[9.5px] font-black uppercase tracking-widest rounded-xl hover:bg-white transition-all flex items-center justify-center space-x-2 shadow-lg shadow-accent/15 flex-shrink-0"
+              >
+                <span>Launch Tracking Hub</span>
+                <ChevronRight className="w-4 h-4" />
+              </Link>
             </div>
           </div>
         </div>
@@ -899,91 +896,7 @@ export function OrderConfirmationPage() {
         )}
       </AnimatePresence>
 
-      {/* MoMo PIN Simulation Modal */}
-      <AnimatePresence>
-        {isPinPromptOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-6"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="w-full max-w-sm flex flex-col items-center"
-            >
-              {/* MoMo Logo/Icon */}
-              <div className="w-20 h-20 bg-accent rounded-3xl mb-8 flex items-center justify-center text-black shadow-[0_0_50px_rgba(242,125,38,0.4)]">
-                <Zap className="w-10 h-10" />
-              </div>
 
-              <div className="text-center mb-12">
-                <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-2">SECURE GATEWAY</h3>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent">Authorize MoMo Protocol</p>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mt-4 leading-relaxed">
-                  Enter your secret PIN to authenticate the <br/> 
-                  <span className="text-white font-black">{formatGHC(order?.depositAmount || 0)}</span> transaction.
-                </p>
-              </div>
-
-              {/* PIN Display */}
-              <div className="flex justify-center gap-4 mb-16">
-                {[...Array(4)].map((_, i) => (
-                  <motion.div
-                    key={i}
-                    animate={momoPin.length > i ? { scale: [1, 1.2, 1], backgroundColor: '#F27D26' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0.05)' }}
-                    className={cn(
-                      "w-4 h-4 rounded-full border border-white/10 transition-all",
-                      momoPin.length > i ? "bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)]" : "bg-white/5"
-                    )}
-                  />
-                ))}
-              </div>
-
-              {/* Number Pad */}
-              <div className="grid grid-cols-3 gap-4 w-full mb-12">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                  <button
-                    key={num}
-                    onClick={() => handleKeyClick(num.toString())}
-                    className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
-                  >
-                    {num}
-                  </button>
-                ))}
-                <button 
-                  onClick={() => setIsPinPromptOpen(false)}
-                  className="h-16 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
-                >
-                  ABORT
-                </button>
-                <button
-                  onClick={() => handleKeyClick('0')}
-                  className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
-                >
-                  0
-                </button>
-                <button
-                  onClick={handleKeyBackspace}
-                  className="h-16 flex items-center justify-center text-white/40 hover:text-white rounded-2xl bg-white/5 border border-white/5 hover:border-white/20 transition-all"
-                >
-                  <RefreshCw className="w-5 h-5 rotate-[270deg]" />
-                </button>
-              </div>
-
-              <button
-                onClick={handlePinSubmit}
-                disabled={momoPin.length < 4}
-                className="w-full py-5 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-2xl hover:bg-white hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 shadow-2xl shadow-accent/20"
-              >
-                PROCEED TO LEDGER
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

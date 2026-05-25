@@ -43,6 +43,7 @@ export function ShopPage() {
   
   const [products, setProducts] = useState<any[]>([]);
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [selectedGender, setSelectedGender] = useState('All');
   const [selectedColor, setSelectedColor] = useState('All');
   const [selectedGSM, setSelectedGSM] = useState('All');
   const [showOnlySale, setShowOnlySale] = useState(false);
@@ -90,6 +91,7 @@ export function ShopPage() {
                           p.category.toLowerCase().includes(search) ||
                           (p.agentName || '').toLowerCase().includes(search);
       const matchesCategory = selectedCategory === 'All' || p.category.includes(selectedCategory);
+      const matchesGender = selectedGender === 'All' || (p.gender || 'unisex') === selectedGender;
       const matchesPrice = price >= priceRange[0] && price <= priceRange[1];
       const matchesColor = selectedColor === 'All' || 
                           (p.colors && p.colors.includes(selectedColor)) || 
@@ -97,7 +99,7 @@ export function ShopPage() {
       const matchesGSM = selectedGSM === 'All' || (p.gsmOptions && p.gsmOptions.includes(selectedGSM));
       const matchesSale = !showOnlySale || p.isOnSale === true;
 
-      return matchesSearch && matchesCategory && matchesPrice && matchesColor && matchesGSM && matchesSale;
+      return matchesSearch && matchesCategory && matchesGender && matchesPrice && matchesColor && matchesGSM && matchesSale;
     }).sort((a, b) => {
       if (sortBy === 'newest') {
         const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
@@ -110,7 +112,7 @@ export function ShopPage() {
       if (sortBy === 'price-high') return priceB - priceA;
       return 0;
     });
-  }, [products, search, selectedCategory, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy]);
+  }, [products, search, selectedCategory, selectedGender, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy]);
 
   const isNew = (createdAt: any) => {
     if (!createdAt) return false;
@@ -243,8 +245,34 @@ export function ShopPage() {
              </div>
           </div>
 
-          {/* GSM & Color Row */}
+          {/* GSM, Gender & Color Row */}
           <div className="flex flex-col lg:flex-row gap-8 py-8 border-y border-white/5">
+            {/* Gender Segment */}
+            <div className="flex-1 space-y-4">
+              <span className="text-[10px] font-black uppercase tracking-editorial text-white/20 block">Gender Segment</span>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: 'All', label: 'ANY GENDER' },
+                  { value: 'male', label: 'MALE' },
+                  { value: 'female', label: 'FEMALE' },
+                  { value: 'unisex', label: 'UNISEX' }
+                ].map(item => (
+                  <button
+                    key={item.value}
+                    onClick={() => setSelectedGender(item.value)}
+                    className={cn(
+                      "px-6 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border",
+                      selectedGender === item.value 
+                        ? "bg-accent text-black border-accent" 
+                        : "bg-white/5 text-white/40 border-white/10 hover:border-white/30"
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* GSM Weights */}
             <div className="flex-1 space-y-4">
               <span className="text-[10px] font-black uppercase tracking-editorial text-white/20 block">Weight Class (GSM)</span>

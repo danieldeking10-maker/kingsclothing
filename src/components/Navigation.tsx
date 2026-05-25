@@ -358,9 +358,9 @@ export function Header() {
           <nav className="hidden md:flex items-center space-x-2 lg:space-x-8 flex-shrink-0">
             <Link to="/shop" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Shop</Link>
             <Link to="/agent" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Agents</Link>
-            {user && (
-              <Link to="/orders" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">My Orders</Link>
-            )}
+            <Link to="/orders" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">
+              {user ? "My Orders" : "Track Order"}
+            </Link>
             
             {(installPrompt || isIOS) && (
               <button 
@@ -764,6 +764,8 @@ export function Footer() {
             <li><Link to="/orders" className="hover:text-white transition-colors">My Orders</Link></li>
             <li><Link to="/about" className="hover:text-white transition-colors">Our Ethos</Link></li>
             <li><Link to="/tos" className="hover:text-white transition-colors">Terms</Link></li>
+            <li><Link to="/faq" className="hover:text-white transition-colors">FAQ Support</Link></li>
+            <li><Link to="/size-guide" className="hover:text-white transition-colors">Sizing Specs</Link></li>
             {((installPrompt && !isInstalled) || isIOS) && (
               <li><button onClick={() => {
                 if (isIOS) setIsInstallModalOpen(true);
