@@ -59,7 +59,8 @@ import {
   Bar,
   Legend,
   ComposedChart,
-  Line
+  Line,
+  LineChart
 } from 'recharts';
 
 import { reportError, LogLevel } from '../lib/errorReporting';
@@ -800,6 +801,69 @@ export function AgentPortal() {
 
     return data;
   }, [referrals, myDesigns]);
+
+  const owner30DayTrendData = useMemo(() => {
+    if (!isBrandOwner) return [];
+    
+    const data = [];
+    const now = new Date();
+    
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const dateStr = d.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+      data.push({
+        dateStr,
+        timestamp: d.getTime(),
+        revenue: 0,
+        volume: 0,
+        rawDate: d
+      });
+    }
+
+    allOrders.forEach(order => {
+      if (!order.createdAt) return;
+      let orderDate;
+      if (order.createdAt.toDate) {
+        orderDate = order.createdAt.toDate();
+      } else if (order.createdAt.seconds) {
+        orderDate = new Date(order.createdAt.seconds * 1000);
+      } else {
+        orderDate = new Date(order.createdAt);
+      }
+      
+      const orderDayStart = new Date(orderDate.getFullYear(), orderDate.getMonth(), orderDate.getDate()).getTime();
+      const match = data.find(day => day.timestamp === orderDayStart);
+      if (match) {
+        match.revenue += Number(order.totalAmount || 0);
+        match.volume += 1;
+      }
+    });
+
+    return data;
+  }, [allOrders, isBrandOwner]);
+
+  const owner30DayStats = useMemo(() => {
+    if (!isBrandOwner || owner30DayTrendData.length === 0) {
+      return { totalRevenue: 0, totalVolume: 0, aov: 0, peakDailySales: 0 };
+    }
+    
+    let totalRevenue = 0;
+    let totalVolume = 0;
+    let peakDailySales = 0;
+    
+    owner30DayTrendData.forEach(day => {
+      totalRevenue += day.revenue;
+      totalVolume += day.volume;
+      if (day.revenue > peakDailySales) {
+        peakDailySales = day.revenue;
+      }
+    });
+    
+    const aov = totalVolume > 0 ? totalRevenue / totalVolume : 0;
+    
+    return { totalRevenue, totalVolume, aov, peakDailySales };
+  }, [owner30DayTrendData, isBrandOwner]);
 
   const shareLinks = useMemo(() => {
     if (!user) return { twitter: '', whatsapp: '' };
@@ -2808,6 +2872,141 @@ export function AgentPortal() {
                               ))
                            )}
                         </div>
+                     </div>
+                  </div>
+               </section>
+            )}
+
+            {/* Sovereign Operational Velocity (30-Day Trend Chart) */}
+            {isBrandOwner && (
+               <section id="operational-velocity" className="bg-[#0F0F10] border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 shadow-[0_0_80px_rgba(242,125,38,0.03)] relative overflow-hidden mb-24">
+                  <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
+                     <Activity className="w-40 h-40 text-accent" strokeWidth={1} />
+                  </div>
+                  
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 pb-8 border-b border-white/5 relative z-10">
+                     <div className="flex items-center space-x-6">
+                        <div className="bg-accent/20 p-5 rounded-3xl border border-accent/20 text-accent">
+                           <Activity className="w-10 h-10" />
+                        </div>
+                        <div>
+                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Operational Velocity<span className="text-accent">.</span></h2>
+                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 italic">30-Day Commander Insights Matrix</p>
+                        </div>
+                     </div>
+                     
+                     <div className="flex flex-wrap gap-4">
+                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1 flex items-center justify-center gap-1.5">
+                              <span className="w-1.5 h-1.5 bg-accent rounded-full" /> 30D Revenue
+                           </p>
+                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.totalRevenue)}</p>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1 flex items-center justify-center gap-1.5">
+                              <span className="w-1.5 h-1.5 bg-white/40 rounded-full" /> 30D Volume
+                           </p>
+                           <p className="text-2xl font-mono font-black text-accent">{owner30DayStats.totalVolume} Orders</p>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Average Order Value</p>
+                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.aov)}</p>
+                        </div>
+                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
+                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Daily Peak</p>
+                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.peakDailySales)}</p>
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* Recharts Component */}
+                  <div className="bg-black/40 rounded-[2.5rem] border border-white/5 p-6 md:p-10 relative z-10">
+                     <div className="h-[400px] w-full">
+                        {owner30DayTrendData.length === 0 ? (
+                           <div className="h-full flex flex-col items-center justify-center text-white/10">
+                              <Clock className="w-12 h-12 mb-4 animate-pulse" />
+                              <p className="text-xs font-black uppercase tracking-widest">No order data logged in matching timeline.</p>
+                           </div>
+                        ) : (
+                           <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={owner30DayTrendData} margin={{ top: 20, right: 35, left: 10, bottom: 10 }}>
+                                 <defs>
+                                    <linearGradient id="revenueGlow" x1="0" y1="0" x2="0" y2="1">
+                                       <stop offset="5%" stopColor="#f27d26" stopOpacity={0.2}/>
+                                       <stop offset="95%" stopColor="#f27d26" stopOpacity={0}/>
+                                    </linearGradient>
+                                 </defs>
+                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                                 <XAxis 
+                                    dataKey="dateStr" 
+                                    axisLine={false} 
+                                    tickLine={false} 
+                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }} 
+                                    dy={10}
+                                 />
+                                 <YAxis 
+                                    yAxisId="left"
+                                    axisLine={false} 
+                                    tickLine={false} 
+                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }}
+                                    label={{ value: 'Revenue (GHS)', angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: 900, offset: 0 }}
+                                 />
+                                 <YAxis 
+                                    yAxisId="right"
+                                    orientation="right"
+                                    axisLine={false} 
+                                    tickLine={false} 
+                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }}
+                                    label={{ value: 'Orders Volume', angle: 90, position: 'insideRight', fill: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: 900, offset: 5 }}
+                                 />
+                                 <Tooltip 
+                                    content={({ active, payload, label }) => {
+                                       if (active && payload && payload.length) {
+                                          const revVal = payload.find(p => p.dataKey === 'revenue')?.value || 0;
+                                          const volVal = payload.find(p => p.dataKey === 'volume')?.value || 0;
+                                          return (
+                                             <div className="bg-[#0c0c0d] border border-white/10 p-5 rounded-2xl shadow-2xl space-y-2 uppercase text-[9px] font-black">
+                                                <p className="text-white/40 border-b border-white/5 pb-1">{label}</p>
+                                                <div className="flex justify-between gap-6">
+                                                   <span className="text-white/60">Revenue:</span>
+                                                   <span className="text-accent">{formatGHC(Number(revVal))}</span>
+                                                </div>
+                                                <div className="flex justify-between gap-6">
+                                                   <span className="text-white/60">Orders:</span>
+                                                   <span className="text-white">{volVal} units</span>
+                                                </div>
+                                             </div>
+                                          );
+                                       }
+                                       return null;
+                                    }}
+                                 />
+                                 <Line 
+                                    yAxisId="left"
+                                    type="monotone" 
+                                    dataKey="revenue" 
+                                    stroke="#f27d26" 
+                                    strokeWidth={4}
+                                    dot={{ fill: '#f27d26', strokeWidth: 0, r: 4 }}
+                                    activeDot={{ r: 6, stroke: '#ffffff', strokeWidth: 2 }}
+                                    animationDuration={1500}
+                                    name="Revenue"
+                                 />
+                                 <Line 
+                                    yAxisId="right"
+                                    type="monotone" 
+                                    dataKey="volume" 
+                                    stroke="rgba(255,255,255,0.4)" 
+                                    strokeWidth={2}
+                                    strokeDasharray="4 4"
+                                    dot={{ fill: 'rgba(255,255,255,0.4)', strokeWidth: 0, r: 3 }}
+                                    activeDot={{ r: 5, stroke: '#f27d26', strokeWidth: 1 }}
+                                    animationDuration={2000}
+                                    name="Order Volume"
+                                 />
+                              </LineChart>
+                           </ResponsiveContainer>
+                        )}
                      </div>
                   </div>
                </section>
