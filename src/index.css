@@ -59,3 +59,42 @@
     to { transform: rotate(360deg); }
   }
 }
+
+@media print {
+  /* Hide headers, footers, navigation, tracking, or action buttons */
+  header, footer, nav, .print\:hidden, #order-print-receipt-btn {
+    display: none !important;
+  }
+  
+  body, html, main {
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Make sure colors apply exactly of background items and highlights */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Force plain colors for containers */
+  .glass {
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  p, span, h1, h2, h3, h4, h5, h6, div, blockquote, li {
+    color: #000000 !important;
+  }
+
+  .text-accent {
+    color: #f27d26 !important;
+  }
+}
+

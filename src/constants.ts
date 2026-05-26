@@ -50,5 +50,12 @@ export const FABRIC_COLORS = [
   { name: 'Noir Black', hex: '#000000' },
   { name: 'Acid Grey', hex: '#4A4A4A' },
   { name: 'Royal Blue', hex: '#002366' },
-  { name: 'Sand', hex: '#C2B280' }
+  { name: 'Sand', hex: '#C2B280' },
+  { name: 'Cream Oat', hex: '#F5F2EB' },
+  { name: 'Mocha Brown', hex: '#3D2E2B' },
+  { name: 'Olive Drab', hex: '#354230' },
+  { name: 'Sovereign Purple', hex: '#3E1C52' },
+  { name: 'Crimson Red', hex: '#A21C26' },
+  { name: 'Vintage Teal', hex: '#2C5E64' },
+  { name: 'Golden Harvest', hex: '#C69214' }
 ];

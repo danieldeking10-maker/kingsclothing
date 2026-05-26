@@ -18,7 +18,8 @@ import {
   X,
   Search,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Printer
 } from 'lucide-react';
 import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -470,9 +471,9 @@ export function OrderConfirmationPage() {
         </div>
 
         {/* Details Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 print:block">
           {/* Payment & Next Steps */}
-          <div className="space-y-8">
+          <div className="space-y-8 print:hidden">
             <div className="glass p-10 rounded-[2.5rem] border border-white/5 flex flex-col justify-between h-full group hover:border-accent/30 transition-all duration-500">
                <div>
                   <div className="flex items-center space-x-2 text-accent mb-6">
@@ -693,51 +694,62 @@ export function OrderConfirmationPage() {
           </div>
 
           {/* Order Summary */}
-          <div className="glass p-10 rounded-[2.5rem] border border-white/5">
+          <div className="glass p-10 rounded-[2.5rem] border border-white/5 print:w-full print:bg-white print:text-black print:border-none print:shadow-none print:p-0">
              <div className="flex justify-between items-end mb-12">
-                <h3 className="text-[10px] font-black uppercase tracking-editorial text-white/40 italic">Architecture</h3>
-                <p className="text-[10px] font-black uppercase tracking-widest text-accent">Summary</p>
+                 <h3 className="text-[10px] font-black uppercase tracking-editorial text-white/40 italic print:text-black/40">Architecture</h3>
+                 <p className="text-[10px] font-black uppercase tracking-widest text-accent print:text-black font-bold">Summary</p>
              </div>
              
              <div className="space-y-8">
                 {order.items.map((item: any, idx: number) => (
                   <div key={idx} className="flex items-center space-x-6">
-                    <div className="w-20 h-24 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 grayscale">
+                    <div className="w-20 h-24 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 grayscale print:border-black/10">
                        <img src="https://picsum.photos/seed/item/200/250" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                     <div className="flex-1">
-                      <h4 className="text-sm font-black uppercase tracking-tighter text-white mb-2 italic">"{item.name}"</h4>
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/20">
+                      <h4 className="text-sm font-black uppercase tracking-tighter text-white mb-2 italic print:text-black">"{item.name}"</h4>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-white/20 print:text-black/40">
                          {item.gsm} GSM • {item.size} • {item.color}
                       </p>
                     </div>
-                    <div className="text-accent font-mono font-black text-xs">
+                    <div className="text-accent font-mono font-black text-xs print:text-black">
                        {formatGHC(item.price)}
                     </div>
                   </div>
                 ))}
              </div>
 
-             <div className="mt-12 pt-8 border-t border-white/5 space-y-4">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20">
+             <div className="mt-12 pt-8 border-t border-white/5 space-y-4 print:border-black/10">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20 print:text-black/60">
                    <span>Gross Total</span>
-                   <span className="text-white">{formatGHC(order.totalAmount)}</span>
+                   <span className="text-white print:text-black">{formatGHC(order.totalAmount)}</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent print:text-black">
                    <span>Deposit to Start</span>
-                   <span className="font-mono text-lg">{formatGHC(order.depositAmount)}</span>
+                   <span className="font-mono text-lg print:text-black">{formatGHC(order.depositAmount)}</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20 print:text-black/60">
                    <span>Balance on Delivery</span>
-                   <span>{formatGHC(order.totalAmount - order.depositAmount)}</span>
+                   <span className="print:text-black">{formatGHC(order.totalAmount - order.depositAmount)}</span>
                 </div>
+             </div>
+
+             <div className="mt-8 pt-6 border-t border-white/5 print:hidden">
+                <button
+                  id="order-print-receipt-btn"
+                  onClick={() => window.print()}
+                  className="w-full py-4 bg-white/5 border border-white/10 hover:border-accent text-white font-black uppercase text-[10px] tracking-widest rounded-2xl transition-all flex items-center justify-center space-x-2 active:scale-95 duration-200"
+                >
+                   <Printer className="w-4 h-4 text-accent" />
+                   <span>Print Receipt Blueprint</span>
+                </button>
              </div>
           </div>
         </div>
       </div>
 
       {/* Global Order Tracking Segment */}
-      <section className="mt-24 pt-24 border-t border-white/5 pb-16">
+      <section className="mt-24 pt-24 border-t border-white/5 pb-16 print:hidden">
         <div className="max-w-4xl mx-auto px-4">
           <div className="glass p-12 rounded-[3.5rem] border border-white/10 relative overflow-hidden group">
             <div className="absolute -top-24 -right-24 w-64 h-64 bg-accent/5 blur-[100px] rounded-full group-hover:bg-accent/10 transition-colors" />
