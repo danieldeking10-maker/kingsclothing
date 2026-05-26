@@ -11,6 +11,7 @@ import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { EnhancedImage } from './ui/EnhancedImage';
+import { useProductPreloader } from '../hooks/useProductPreloader';
 
 interface ProductCardProps {
   product: any;
@@ -46,6 +47,15 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
   });
   const [isSaving, setIsSaving] = React.useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = React.useState(false);
+
+  const { getPreloadHandlers, attachIntersectionPreloader } = useProductPreloader();
+  const cardRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (cardRef.current) {
+      return attachIntersectionPreloader(cardRef.current, product);
+    }
+  }, [product, attachIntersectionPreloader]);
 
   React.useEffect(() => {
     setGsmPrices({
@@ -176,12 +186,17 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
   return (
     <motion.div
+      ref={cardRef}
       layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="group relative"
     >
-      <Link to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`} className="block space-y-6">
+      <Link 
+        to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`} 
+        className="block space-y-6"
+        {...getPreloadHandlers(product)}
+      >
         <div className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#1A1A1B] group-hover:shadow-[0_0_50px_rgba(242,125,38,0.1)] transition-all duration-700">
           <div className="relative w-full h-full">
             <EnhancedImage 
