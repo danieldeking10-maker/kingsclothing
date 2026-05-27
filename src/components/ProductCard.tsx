@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon } from 'lucide-react';
+import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon, Clock } from 'lucide-react';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { PRICING, GSM_OPTIONS, FABRIC_COLORS } from '@/src/constants';
 import { GSM } from '@/src/types';
@@ -9,7 +9,7 @@ import { generateProductTags } from '../services/geminiService';
 import { useCart } from '../lib/CartContext';
 import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, limit, onSnapshot } from 'firebase/firestore';
 import { EnhancedImage } from './ui/EnhancedImage';
 import { useProductPreloader } from '../hooks/useProductPreloader';
 
@@ -89,7 +89,90 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
   const [selectedGsm, setSelectedGsm] = React.useState<GSM>(gsmOptions[0] || '260');
 
-  const currentPrice = React.useMemo(() => getProductPrice(product, selectedGsm), [product, selectedGsm]);
+  // Active promotion state & real-time loader
+  const [activePromo, setActivePromo] = React.useState<any>(null);
+  const [timeRemaining, setTimeRemaining] = React.useState<string>('');
+
+  React.useEffect(() => {
+    const q = query(
+      collection(db, 'promotions'),
+      where('active', '==', true),
+      limit(1)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setActivePromo({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setActivePromo(null);
+      }
+    }, (err) => {
+      console.error("Failed to fetch active promotions in ProductCard:", err);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  React.useEffect(() => {
+    const formatCountdown = (ms: number): string => {
+      if (ms <= 0) return '00:00:00';
+      const totalSeconds = Math.floor(ms / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return [
+        hours.toString().padStart(2, '0'),
+        minutes.toString().padStart(2, '0'),
+        seconds.toString().padStart(2, '0')
+      ].join(':');
+    };
+
+    let targetDate: Date | null = null;
+    
+    if (product?.saleEndsAt) {
+      if (typeof product.saleEndsAt.toDate === 'function') {
+        targetDate = product.saleEndsAt.toDate();
+      } else {
+        targetDate = new Date(product.saleEndsAt);
+      }
+    } else if (activePromo?.endDate) {
+      if (typeof activePromo.endDate.toDate === 'function') {
+        targetDate = activePromo.endDate.toDate();
+      } else {
+        targetDate = new Date(activePromo.endDate);
+      }
+    } else if (product?.isOnSale || activePromo) {
+      // Midnight today fallback
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+      targetDate = endOfToday;
+    }
+
+    if (!targetDate) {
+      setTimeRemaining('');
+      return;
+    }
+
+    const updateTimer = () => {
+      const diff = targetDate!.getTime() - Date.now();
+      if (diff <= 0) {
+        setTimeRemaining('Expired');
+      } else {
+        setTimeRemaining(formatCountdown(diff));
+      }
+    };
+
+    updateTimer();
+    const intervalId = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [product?.saleEndsAt, product?.isOnSale, activePromo]);
+
+  const currentPrice = React.useMemo(() => {
+    let price = getProductPrice(product, selectedGsm);
+    if (!product.isOnSale && activePromo) {
+      price = price * (1 - (activePromo.discountPercentage / 100));
+    }
+    return price;
+  }, [product, selectedGsm, activePromo]);
 
   const activeImage = React.useMemo(() => {
     const colorGsmKey = `${selectedColor.name}-${selectedGsm}`;
@@ -413,12 +496,16 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
               )}
               <div className="flex items-center gap-2">
                  <motion.div 
-                   initial={{ opacity: 0, y: 20 }}
+                   initial={{ opacity: 0, y: 20, scale: 1 }}
                    animate={{ opacity: 1, y: 0 }}
-                   transition={{ duration: 0.4, ease: "easeOut" }}
-                   className="product-price-container flex flex-col items-end"
+                   whileHover={{ scale: 1.05 }}
+                   transition={{
+                     default: { duration: 0.4, ease: "easeOut" },
+                     scale: { type: "spring", stiffness: 400, damping: 15 }
+                   }}
+                   className="product-price-container flex flex-col items-end cursor-pointer"
                  >
-                    {product.isOnSale && product.salePrice && (
+                    {((product.isOnSale && product.salePrice) || (!product.isOnSale && activePromo)) && (
                        <p className="text-[10px] font-mono font-bold text-white/20 line-through tracking-tighter">
                          {formatGHC(getProductPrice({ ...product, isOnSale: false }, selectedGsm))}
                        </p>
@@ -426,7 +513,13 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                     <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
                       {formatGHC(currentPrice)}
                     </p>
-                 </motion.div>
+                 
+                     {timeRemaining && timeRemaining !== 'Expired' && (
+                        <span className="flex items-center gap-1 mt-1.5 bg-accent/20 border border-accent/40 px-2 py-0.5 rounded-full text-[8px] font-mono font-bold text-accent tracking-tighter animate-pulse select-none" title="Active promo campaign end countdown">
+                          <Clock className="w-2.5 h-2.5 text-accent animate-spin [animation-duration:8s]" />
+                          <span>{timeRemaining}</span>
+                        </span>
+                     )}</motion.div>
                  {isAdmin && onUpdatePrice && (
                     <div className="flex items-center gap-1">
                       <button 

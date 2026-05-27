@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download } from 'lucide-react';
+import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download, Bell, Tag, Gift } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence, stagger } from 'motion/react';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
@@ -9,7 +10,7 @@ import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
 import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, orderBy, onSnapshot } from 'firebase/firestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { PWAInstallModal } from './PWAInstallModal';
 
@@ -35,6 +36,53 @@ export function Header() {
   const navigate = useNavigate();
   const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+
+  // Notifications State & Listener
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [lastSeenTime, setLastSeenTime] = useState<number>(() => {
+    return Number(localStorage.getItem('last_seen_notification_time') || '0');
+  });
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'notifications'),
+      orderBy('createdAt', 'desc'),
+      limit(15)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docsList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setNotifications(docsList);
+
+      if (docsList.length > 0) {
+        let unread = 0;
+        docsList.forEach((notif: any) => {
+          const creationMs = notif.createdAt?.toMillis ? notif.createdAt.toMillis() : Date.now();
+          if (creationMs > lastSeenTime) {
+            unread++;
+          }
+        });
+        setUnreadCount(unread);
+      }
+    }, (error) => {
+      console.error("Notifications listener failed:", error);
+    });
+
+    return () => unsubscribe();
+  }, [lastSeenTime]);
+
+  const handleOpenNotifications = () => {
+    setIsNotificationsOpen(!isNotificationsOpen);
+    const now = Date.now();
+    localStorage.setItem('last_seen_notification_time', String(now));
+    setLastSeenTime(now);
+    setUnreadCount(0);
+  };
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -407,9 +455,103 @@ export function Header() {
               )}
             </div>
 
+            {/* Real-time Notifications Bell */}
+            <div className="relative">
+              <button 
+                onClick={handleOpenNotifications}
+                className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 text-foreground/80 hover:text-accent cursor-pointer"
+                title="Citadel Transmissions"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-accent text-black text-[8px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 15 }}
+                    className="absolute right-0 mt-3 w-80 md:w-96 bg-black/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 shadow-3xl z-[100] max-h-[480px] overflow-hidden flex flex-col"
+                  >
+                    <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-accent animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Citadel Live Transmissions</span>
+                      </div>
+                      <span className="text-[8px] font-mono font-bold text-accent/60 uppercase">Real-time Feed</span>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1 max-h-[350px]">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center space-y-2">
+                          <Bell className="w-8 h-8 text-white/5 mx-auto" />
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20">No broadcasts active at this interval</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif: any) => (
+                          <div 
+                            key={notif.id} 
+                            className="p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] hover:border-accent/20 transition-all group"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
+                                {notif.type === 'promotion' ? (
+                                  <>
+                                    <Tag className="w-3 h-3" /> Promotion
+                                  </>
+                                ) : (
+                                  <>
+                                    <Gift className="w-3 h-3" /> Coupon Code
+                                  </>
+                                )}
+                              </span>
+                              <span className="text-[8px] font-semibold text-white/25">
+                                {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recent'}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] font-black uppercase text-white group-hover:text-accent transition-colors text-left leading-normal">
+                              {notif.title}
+                            </p>
+
+                            <p className="text-[10px] text-white/60 font-light leading-relaxed text-left">
+                              {notif.message}
+                            </p>
+
+                            {notif.code && (
+                              <div className="flex items-center justify-between mt-2 p-2.5 bg-accent/10 border border-accent/20 rounded-xl">
+                                <span className="text-[9px] font-mono font-black uppercase text-accent tracking-widest">
+                                  {notif.code}
+                                </span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(notif.code);
+                                    toast.success('Discount Code Copied');
+                                  }}
+                                  className="text-[8px] font-black uppercase tracking-wider text-white hover:text-accent font-sans cursor-pointer"
+                                >
+                                  Copy Code
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button 
               onClick={() => setIsCartOpen(true)}
-              className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5"
+              className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 cursor-pointer"
             >
               <ShoppingCart className="w-4 h-4" />
               {totalItems > 0 && (
@@ -422,9 +564,107 @@ export function Header() {
 
           {/* Mobile Right Icons */}
           <div className="flex md:hidden items-center space-x-2 flex-shrink-0">
+            {/* Mobile Notifications Bell Trigger */}
+            <div className="relative">
+              <button 
+                onClick={handleOpenNotifications}
+                className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"
+              >
+                <Bell className="w-6 h-6" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 bg-accent text-black text-[8px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-background">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 15 }}
+                    className="fixed top-20 left-4 right-4 bg-black/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 shadow-3xl z-[100] max-h-[440px] overflow-hidden flex flex-col"
+                  >
+                    <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-accent animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Citadel transmissions</span>
+                      </div>
+                      <button 
+                        onClick={() => setIsNotificationsOpen(false)}
+                        className="text-[8px] font-black uppercase text-white/40 hover:text-white cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1 max-h-[320px]">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center space-y-2">
+                          <Bell className="w-8 h-8 text-white/5 mx-auto" />
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20">No active broadcasts</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif: any) => (
+                          <div 
+                            key={notif.id} 
+                            className="p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 text-left"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
+                                {notif.type === 'promotion' ? (
+                                  <>
+                                    <Tag className="w-3 h-3" /> Promotion
+                                  </>
+                                ) : (
+                                  <>
+                                    <Gift className="w-3 h-3" /> coupon
+                                  </>
+                                )}
+                              </span>
+                              <span className="text-[8px] font-semibold text-white/25">
+                                {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recent'}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] font-black uppercase text-white leading-normal">
+                              {notif.title}
+                            </p>
+
+                            <p className="text-[10px] text-white/60 font-light leading-relaxed">
+                              {notif.message}
+                            </p>
+
+                            {notif.code && (
+                              <div className="flex items-center justify-between mt-2 p-2.5 bg-accent/10 border border-accent/20 rounded-xl">
+                                <span className="text-[9px] font-mono font-black uppercase text-accent tracking-widest">
+                                  {notif.code}
+                                </span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(notif.code);
+                                    toast.success('Discount Code Copied');
+                                  }}
+                                  className="text-[8px] font-black uppercase tracking-wider text-white hover:text-accent font-sans"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button 
               onClick={() => setIsCartOpen(true)}
-              className="p-3 relative text-foreground/60 hover:text-accent transition-colors"
+              className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"
             >
               <ShoppingCart className="w-6 h-6" />
               {totalItems > 0 && (

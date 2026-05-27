@@ -370,13 +370,16 @@ export function AgentPortal() {
     name: '',
     discountPercentage: 0,
     active: true,
-    message: ''
+    message: '',
+    broadcastNotification: true
   });
   const [newCoupon, setNewCoupon] = useState({
     code: '',
     discountPercentage: 0,
     usageLimit: null as number | null,
-    active: true
+    active: true,
+    message: '',
+    broadcastNotification: true
   });
   const [referralCode, setReferralCode] = useState(agentProfile?.referralCode || '');
   const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
@@ -499,12 +502,26 @@ export function AgentPortal() {
       return;
     }
     try {
+      const { broadcastNotification, ...promotionData } = newPromotion;
       await addDoc(collection(db, 'promotions'), {
-        ...newPromotion,
+        ...promotionData,
         createdAt: serverTimestamp()
       });
-      toast.success('Promotion Injected');
-      setNewPromotion({ name: '', discountPercentage: 0, active: true, message: '' });
+
+      if (broadcastNotification) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `New Promotion: ${newPromotion.name}`,
+          message: newPromotion.message || `Enjoy a royal ${newPromotion.discountPercentage}% discount on all elite clothing items.`,
+          type: 'promotion',
+          discountPercentage: newPromotion.discountPercentage,
+          code: null,
+          createdAt: serverTimestamp()
+        });
+        toast.success('Promotion Injected and Broadcast Sent!');
+      } else {
+        toast.success('Promotion Injected silently');
+      }
+      setNewPromotion({ name: '', discountPercentage: 0, active: true, message: '', broadcastNotification: true });
     } catch (e: any) {
       toast.error('Promotion failed: ' + e.message);
     }
@@ -516,14 +533,28 @@ export function AgentPortal() {
       return;
     }
     try {
+      const { broadcastNotification, message, ...couponData } = newCoupon;
       await addDoc(collection(db, 'coupons'), {
-        ...newCoupon,
+        ...couponData,
         code: newCoupon.code.toUpperCase(),
         usageCount: 0,
         createdAt: serverTimestamp()
       });
-      toast.success('Coupon Generated');
-      setNewCoupon({ code: '', discountPercentage: 0, usageLimit: null, active: true });
+
+      if (broadcastNotification) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `New Coupon Activated: ${newCoupon.code.toUpperCase()}`,
+          message: message || `Claim a special ${newCoupon.discountPercentage}% discount with coupon code ${newCoupon.code.toUpperCase()}${newCoupon.usageLimit ? ` (Limit: first ${newCoupon.usageLimit} claims)` : ''}!`,
+          type: 'coupon',
+          discountPercentage: newCoupon.discountPercentage,
+          code: newCoupon.code.toUpperCase(),
+          createdAt: serverTimestamp()
+        });
+        toast.success('Coupon Generated and Broadcast Sent!');
+      } else {
+        toast.success('Coupon Generated silently');
+      }
+      setNewCoupon({ code: '', discountPercentage: 0, usageLimit: null, active: true, message: '', broadcastNotification: true });
     } catch (e: any) {
       toast.error('Coupon failed: ' + e.message);
     }
@@ -2863,6 +2894,24 @@ export function AgentPortal() {
                               onChange={(e) => setNewPromotion({...newPromotion, message: e.target.value})}
                               className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-medium outline-none focus:border-accent resize-none h-24"
                            />
+                           
+                           {/* Broadcast Toggle */}
+                           <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
+                              <div className="flex flex-col">
+                                 <span className="text-[10px] font-black uppercase tracking-widest text-white">Broadcast Announcement</span>
+                                 <span className="text-[8px] font-medium text-white/40">Dispatch a live feed item to the global customer dashboard</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                 <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={newPromotion.broadcastNotification}
+                                    onChange={(e) => setNewPromotion({...newPromotion, broadcastNotification: e.target.checked})}
+                                 />
+                                 <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                              </label>
+                           </div>
+
                            <button 
                               onClick={handleAddPromotion}
                               className="w-full bg-accent text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-white transition-all active:scale-95 shadow-xl"
@@ -2937,6 +2986,30 @@ export function AgentPortal() {
                               onChange={(e) => setNewCoupon({...newCoupon, usageLimit: e.target.value ? Number(e.target.value) : null})}
                               className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold uppercase tracking-widest outline-none focus:border-accent"
                            />
+                           <textarea 
+                              placeholder="Coupon Dispatch Message (e.g. Claim 10% discount applying KING10!)"
+                              value={newCoupon.message}
+                              onChange={(e) => setNewCoupon({...newCoupon, message: e.target.value})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-medium outline-none focus:border-accent resize-none h-20 mb-4"
+                           />
+
+                           {/* Broadcast Toggle */}
+                           <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl mb-4">
+                              <div className="flex flex-col">
+                                 <span className="text-[10px] font-black uppercase tracking-widest text-accent font-sans">Broadcast Coupon</span>
+                                 <span className="text-[8px] font-medium text-white/40 font-sans">Alert citizens about this loyalty discount code immediately</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                 <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={newCoupon.broadcastNotification}
+                                    onChange={(e) => setNewCoupon({...newCoupon, broadcastNotification: e.target.checked})}
+                                 />
+                                 <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                              </label>
+                           </div>
+
                            <button 
                               onClick={handleAddCoupon}
                               className="w-full bg-white text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-accent transition-all active:scale-95 shadow-xl"
