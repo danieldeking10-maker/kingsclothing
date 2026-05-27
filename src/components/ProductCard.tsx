@@ -412,7 +412,12 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                 </div>
               )}
               <div className="flex items-center gap-2">
-                 <div className="flex flex-col items-end">
+                 <motion.div 
+                   initial={{ opacity: 0, y: 20 }}
+                   animate={{ opacity: 1, y: 0 }}
+                   transition={{ duration: 0.4, ease: "easeOut" }}
+                   className="product-price-container flex flex-col items-end"
+                 >
                     {product.isOnSale && product.salePrice && (
                        <p className="text-[10px] font-mono font-bold text-white/20 line-through tracking-tighter">
                          {formatGHC(getProductPrice({ ...product, isOnSale: false }, selectedGsm))}
@@ -421,7 +426,7 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                     <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
                       {formatGHC(currentPrice)}
                     </p>
-                 </div>
+                 </motion.div>
                  {isAdmin && onUpdatePrice && (
                     <div className="flex items-center gap-1">
                       <button 

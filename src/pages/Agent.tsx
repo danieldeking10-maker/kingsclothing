@@ -47,6 +47,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
 import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
 import { DesignMetadataModal } from '../components/DesignMetadataModal';
+import { ImageCropModal } from '../components/ImageCropModal';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -395,6 +396,8 @@ export function AgentPortal() {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isUpdatingAsset, setIsUpdatingAsset] = useState(false);
   const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [selectedFileForCrop, setSelectedFileForCrop] = useState<File | null>(null);
   const [selectedProductForMetadata, setSelectedProductForMetadata] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ownerFileInputRef = useRef<HTMLInputElement>(null);
@@ -1260,6 +1263,107 @@ export function AgentPortal() {
     }
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFileForCrop(file);
+      setIsCropModalOpen(true);
+    }
+  };
+
+  const handleProcessedUpload = async (croppedBase64: string) => {
+    if (!user) return;
+
+    setIsUploading(true);
+    setUploadStatus('scanning');
+    setScanResults(null);
+
+    // AI Verification Logic using Gemini
+    try {
+      if (!process.env.GEMINI_API_KEY) {
+        throw new Error('AI API Key not configured');
+      }
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      // Extract raw base64 data to send to Gemini
+      const base64Data = croppedBase64.split(',')[1];
+      const mimeType = 'image/jpeg';
+
+      const prompt = `
+        You are the Kings Clothing Brand AI Validator. 
+        Perform a surgical analysis of this design asset for:
+        1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
+        2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
+        3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
+        
+        Provide a verdict on whether this design is worthy of being forged into a blueprint.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: MODEL_NAME,
+        contents: {
+          parts: [
+            { text: prompt },
+            { inlineData: { data: base64Data, mimeType } }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            required: ["passed", "reasoning", "suggestedName", "category"],
+            properties: {
+              passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
+              reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
+              suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
+              category: { type: Type.STRING, description: "The most suitable clothing category." },
+              score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
+            }
+          }
+        }
+      });
+
+      const result = JSON.parse(response.text);
+      setScanResults(result.reasoning);
+
+      if (result.passed) {
+        setUploadStatus('success');
+        // Persist to Firestore
+        await addDoc(collection(db, 'products'), {
+          name: result.suggestedName || 'Streetwear Concept',
+          category: result.category || 'T-Shirts',
+          gender: 'unisex',
+          description: result.reasoning,
+          basePrice: 150,
+          status: 'pending',
+          agentId: user.uid,
+          agentName: user.displayName,
+          mockupImage: croppedBase64,
+          allowedColors: FABRIC_COLORS.map(c => c.name),
+          gsmOptions: ['260'],
+          createdAt: serverTimestamp()
+        });
+        toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
+        setIsCropModalOpen(false);
+      } else {
+        setUploadStatus('rejected');
+        toast.error('Authority Rejected');
+        setIsCropModalOpen(false);
+      }
+
+    } catch (error: any) {
+      console.error('AI Scan Error:', error);
+      toast.error('AI Scan failed: ' + error.message);
+      setUploadStatus('idle');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -1661,7 +1765,7 @@ export function AgentPortal() {
               </div>
               
               <div className="flex items-center gap-4">
-                 <input type="file" hidden ref={fileInputRef} onChange={handleFileUpload} accept="image/*" />
+                 <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept="image/*" />
                  <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
@@ -3133,7 +3237,7 @@ export function AgentPortal() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-6">
-                  <input type="file" hidden ref={fileInputRef} onChange={handleFileUpload} accept="image/*" />
+                  <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept="image/*" />
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
@@ -3809,6 +3913,16 @@ export function AgentPortal() {
         isOpen={isMetadataModalOpen} 
         onClose={() => setIsMetadataModalOpen(false)} 
         product={selectedProductForMetadata} 
+      />
+      <ImageCropModal 
+        isOpen={isCropModalOpen} 
+        onClose={() => {
+          setIsCropModalOpen(false);
+          setSelectedFileForCrop(null);
+        }} 
+        file={selectedFileForCrop} 
+        onConfirmCrop={handleProcessedUpload} 
+        isUploading={isUploading} 
       />
     </main>
   );

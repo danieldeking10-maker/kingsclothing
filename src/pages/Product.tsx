@@ -364,10 +364,33 @@ export function ProductPage() {
     return product.mockupImage;
   }, [product, selectedColor, viewMode, selectedGsm]);
 
-  // Sync image loading indicator
+  const [prevActiveImage, setPrevActiveImage] = useState(activeImage);
+
+  if (activeImage !== prevActiveImage) {
+    setPrevActiveImage(activeImage);
+    const img = new Image();
+    img.src = activeImage;
+    setImageLoading(!img.complete);
+  }
+
+  // Sync image loading indicator with actual load events
   useEffect(() => {
-    setImageLoading(true);
-  }, [selectedColor, viewMode, selectedGsm, product]);
+    if (!activeImage) return;
+    const img = new Image();
+    img.src = activeImage;
+    if (img.complete) {
+      setImageLoading(false);
+      return;
+    }
+
+    img.onload = () => {
+      setImageLoading(false);
+    };
+
+    img.onerror = () => {
+      setImageLoading(false);
+    };
+  }, [activeImage]);
 
   const [showStickyCta, setShowStickyCta] = useState(false);
 
@@ -706,78 +729,64 @@ export function ProductPage() {
               }}
             >
               {imageLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F10] z-30 transition-all duration-700">
-                  <div className="relative">
+                <>
+                  {/* Slim Neon-Glow Progress Line at the top of the image frame */}
+                  <div className="absolute top-0 inset-x-0 h-1 bg-black/40 z-30 overflow-hidden">
                     <motion.div 
-                      animate={{ 
-                        rotate: 360,
-                        scale: [1, 1.1, 1],
-                      }}
-                      transition={{ 
-                        rotate: { duration: 2, repeat: Infinity, ease: "linear" },
-                        scale: { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
-                      }}
-                      className="w-24 h-24 border-4 border-accent/10 border-t-accent rounded-full"
+                      style={{ position: 'absolute', top: 0, bottom: 0 }}
+                      initial={{ left: "-50%", width: "50%" }}
+                      animate={{ left: "100%" }}
+                      transition={{ duration: 1.2, ease: "easeInOut", repeat: Infinity }}
+                      className="bg-gradient-to-r from-transparent via-accent to-transparent"
                     />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <RefreshCw className="w-8 h-8 text-accent animate-spin" />
-                    </div>
                   </div>
-                  <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-center space-y-2">
-                     <p className="text-[10px] font-black uppercase tracking-[0.5em] text-accent animate-pulse">Syncing Asset</p>
-                     <p className="text-[7px] font-black uppercase tracking-widest text-white/20 italic">Resolving High-Def Blueprint</p>
+                  {/* Subtle HUD Badge in the bottom-middle of the image frame */}
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full z-30 flex items-center space-x-2 shadow-2xl">
+                    <RefreshCw className="w-3 h-3 text-accent animate-spin" />
+                    <span className="text-[8px] font-black uppercase tracking-[0.2em] text-accent">Syncing Blueprint</span>
                   </div>
-                </div>
+                </>
               )}
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={viewMode + selectedColor.name}
-                  className="w-full h-full relative"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                >
-                  <EnhancedImage
-                    src={activeImage}
-                    onLoad={() => setImageLoading(false)}
-                    alt={product.name}
-                    className="w-full h-full object-cover"
-                    aspectRatio="aspect-auto"
-                    style={{
-                      transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
+              <div className="w-full h-full relative">
+                <EnhancedImage
+                  src={activeImage}
+                  onLoad={() => setImageLoading(false)}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                  aspectRatio="aspect-auto"
+                  style={{
+                    transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
+                  }}
+                  animate={{
+                    scale: isHovering ? 1.15 : 1,
+                    filter: isHovering ? 'brightness(1.05) contrast(1.05)' : 'brightness(0.9) contrast(1)',
+                  }}
+                  transition={{
+                    scale: { type: "spring", stiffness: 120, damping: 25 },
+                    filter: { duration: 0.3 }
+                  }}
+                />
+                
+                {/* Digital Fabric Dye Overlay */}
+                {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
+                  <motion.div 
+                    key={`overlay-${selectedColor.name}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ 
+                      opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
+                      scale: isHovering ? 1.15 : 1
                     }}
-                    animate={{
-                      scale: 1,
-                      filter: isHovering ? 'brightness(1.1) contrast(1.1)' : 'brightness(0.9) contrast(1)',
+                    style={{ 
+                      backgroundColor: selectedColor.hex,
+                      transformOrigin: `${mousePos.x}% ${mousePos.y}%`
                     }}
                     transition={{
-                      scale: { type: "spring", stiffness: 100, damping: 20 },
-                      filter: { duration: 0.4 }
+                      scale: { type: "spring", stiffness: 120, damping: 25 }
                     }}
+                    className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
                   />
-                  
-                  {/* Digital Fabric Dye Overlay */}
-                  {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
-                    <motion.div 
-                      key={`overlay-${selectedColor.name}`}
-                      initial={{ opacity: 0 }}
-                      animate={{ 
-                        opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
-                        scale: 1
-                      }}
-                      style={{ 
-                        backgroundColor: selectedColor.hex,
-                        transformOrigin: `${mousePos.x}% ${mousePos.y}%`
-                      }}
-                      transition={{
-                        scale: { type: "spring", stiffness: 100, damping: 20 }
-                      }}
-                      className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
-                    />
-                  )}
-                </motion.div>
-              </AnimatePresence>
+                )}
+              </div>
 
 
               {/* View Mode Toggle - Architectural Style */}

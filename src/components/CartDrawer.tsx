@@ -20,7 +20,11 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [isOrdering, setIsOrdering] = React.useState(false);
-  const [isPaymentStep, setIsPaymentStep] = React.useState(false);
+  const [step, setStep] = React.useState<'cart' | 'details' | 'payment'>('cart');
+  const [guestName, setGuestName] = React.useState('');
+  const [guestEmail, setGuestEmail] = React.useState('');
+  const [guestNameError, setGuestNameError] = React.useState('');
+  const [guestEmailError, setGuestEmailError] = React.useState('');
   const [momoNumber, setMomoNumber] = React.useState('');
   const [momoProvider, setMomoProvider] = React.useState<'mtn' | 'telecel' | 'airteltigo'>('mtn');
   const [couponCode, setCouponCode] = React.useState('');
@@ -60,20 +64,47 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   }, [totalPrice, appliedCoupon]);
 
   const handleCheckout = async () => {
-    if (!user) {
-      toast.error('Identity Verification Required');
-      navigate('/auth?redirect=/shop');
-      onClose();
-      return;
-    }
-
     if (items.length === 0) return;
-    
-    if (!isPaymentStep) {
-      setIsPaymentStep(true);
+
+    if (step === 'cart') {
+      if (user) {
+        setStep('payment');
+      } else {
+        setStep('details');
+      }
       return;
     }
 
+    if (step === 'details') {
+      let valid = true;
+      if (!guestName.trim()) {
+        setGuestNameError('Identity verification name is required');
+        valid = false;
+      } else {
+        setGuestNameError('');
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!guestEmail.trim()) {
+        setGuestEmailError('Protocol communication email is required');
+        valid = false;
+      } else if (!emailRegex.test(guestEmail)) {
+        setGuestEmailError('Secure protocol email format is invalid');
+        valid = false;
+      } else {
+        setGuestEmailError('');
+      }
+
+      if (!valid) {
+        toast.error('Identity Credentials Incomplete');
+        return;
+      }
+
+      setStep('payment');
+      return;
+    }
+
+    // Now on step 'payment'
     if (!momoNumber || momoNumber.length < 10) {
       toast.error('Invalid Protocol: Mobile Money Number Required');
       return;
@@ -88,7 +119,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
 
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
-        email: user?.email || 'customer@kingsclothing.brand',
+        email: user?.email || guestEmail || 'customer@kingsclothing.brand',
         amount: Math.round(depositAmount * 100), // convert to pesewas
         currency: 'GHS',
         metadata: {
@@ -112,14 +143,20 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
               display_name: "Provider",
               variable_name: "provider",
               value: momoProvider
+            },
+            {
+              display_name: "Customer Identity",
+              variable_name: "customer_identity",
+              value: user ? `User: ${user.displayName}` : `Guest: ${guestName} (${guestEmail})`
             }
           ]
         },
         callback: async (response: any) => {
           const orderData = {
-            customerId: user.uid,
-            customerName: user.displayName,
-            customerEmail: user.email,
+            customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
+            customerName: user?.displayName || guestName || 'Guest Customer',
+            customerEmail: user?.email || guestEmail || 'guest@kingsclothing.brand',
+            isGuest: !user,
             items: items.map(item => ({
               productId: item.id,
               name: item.name,
@@ -208,6 +245,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="fixed inset-y-0 right-0 w-full max-w-md bg-background border-l border-white/10 z-[101] flex flex-col"
           >
+            {/* Drawer Header */}
             <div className="p-8 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <ShoppingBag className="w-5 h-5 text-accent" />
@@ -215,15 +253,45 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
               </div>
               <button 
                 onClick={onClose}
+                aria-label="Close cart drawer"
                 className="p-3 hover:bg-white/5 rounded-2xl transition-colors text-white/30 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
+            {/* Stepper Progress Bar */}
+            {items.length > 0 && (
+              <div className="px-8 py-3 bg-black/20 border-b border-white/5 flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-white/30">
+                <button 
+                  onClick={() => setStep('cart')}
+                  className={cn("flex items-center space-x-1", step === 'cart' ? "text-accent" : "hover:text-white")}
+                  aria-label="Go to step 1: Cart Ledger"
+                >
+                  <span className="font-mono font-bold">01</span>
+                  <span>Ledger</span>
+                </button>
+                <div className="h-px bg-white/10 flex-1 mx-3" />
+                <button 
+                  onClick={() => !user && step !== 'cart' && setStep('details')}
+                  disabled={!!user}
+                  className={cn("flex items-center space-x-1", step === 'details' ? "text-accent" : user ? "opacity-40" : "hover:text-white")}
+                  aria-label="Go to step 2: Identity (Guests)"
+                >
+                  <span className="font-mono font-bold">02</span>
+                  <span>Identity</span>
+                </button>
+                <div className="h-px bg-white/10 flex-1 mx-3" />
+                <div className={cn("flex items-center space-x-1", step === 'payment' && "text-accent")}>
+                  <span className="font-mono font-bold">03</span>
+                  <span>Payment</span>
+                </div>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
               <AnimatePresence mode="wait">
-                {!isPaymentStep ? (
+                {step === 'cart' ? (
                   <motion.div
                     key="cart-items"
                     initial={{ opacity: 0, x: -20 }}
@@ -252,6 +320,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                               <button 
                                 onClick={() => removeItem(item.cartId)}
                                 className="p-1 text-white/10 hover:text-red-500 transition-colors"
+                                aria-label={`Remove ${item.name} from cart`}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -270,13 +339,15 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                                 <button 
                                   onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                  aria-label="Decrease quantity"
                                 >
                                   -
                                 </button>
-                                <span className="px-4 text-[11px] font-mono font-black">{item.quantity}</span>
+                                <span className="px-4 text-[11px] font-mono font-black" aria-live="polite">{item.quantity}</span>
                                 <button 
                                   onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                  aria-label="Increase quantity"
                                 >
                                   +
                                 </button>
@@ -288,6 +359,90 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                       ))
                     )}
                   </motion.div>
+                ) : step === 'details' ? (
+                  <motion.div
+                    key="details-step"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="space-y-8"
+                  >
+                    <button 
+                      onClick={() => setStep('cart')}
+                      className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
+                      aria-label="Back to Cart list"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Back to Ledger</span>
+                    </button>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-3">
+                        <ShieldCheck className="w-6 h-6 text-accent" />
+                        <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white leading-none">Guest Details</h3>
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">No account required to forge royal gear</p>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <label htmlFor="guest-name" className="text-[10px] font-black uppercase tracking-normal text-white/40 block">Full Name</label>
+                        <input 
+                          id="guest-name"
+                          type="text"
+                          placeholder="Lord/Lady Sterling"
+                          value={guestName}
+                          onChange={(e) => {
+                            setGuestName(e.target.value);
+                            if (e.target.value.trim()) setGuestNameError('');
+                          }}
+                          className={cn(
+                            "w-full bg-white/5 border rounded-2xl p-5 text-sm font-black text-white outline-none focus:border-accent transition-all",
+                            guestNameError ? "border-red-500/50" : "border-white/10"
+                          )}
+                        />
+                        {guestNameError && (
+                          <p className="text-[9px] text-red-400 font-bold uppercase tracking-wider">{guestNameError}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <label htmlFor="guest-email" className="text-[10px] font-black uppercase tracking-normal text-white/40 block">Email Address</label>
+                        <input 
+                          id="guest-email"
+                          type="email"
+                          placeholder="sterling@realm.com"
+                          value={guestEmail}
+                          onChange={(e) => {
+                            setGuestEmail(e.target.value);
+                            if (e.target.value.trim()) setGuestEmailError('');
+                          }}
+                          className={cn(
+                            "w-full bg-white/5 border rounded-2xl p-5 text-sm font-black text-white outline-none focus:border-accent transition-all",
+                            guestEmailError ? "border-red-500/50" : "border-white/10"
+                          )}
+                        />
+                        {guestEmailError && (
+                          <p className="text-[9px] text-red-400 font-bold uppercase tracking-wider">{guestEmailError}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 text-center">
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40">
+                        Prefer brand personalization?
+                      </p>
+                      <button
+                        onClick={() => {
+                          onClose();
+                          navigate('/auth');
+                        }}
+                        className="mt-4 text-[10px] text-accent font-black uppercase tracking-widest hover:text-white transition-all underline decoration-dotted underline-offset-4"
+                      >
+                        Sign in / Register
+                      </button>
+                    </div>
+                  </motion.div>
                 ) : (
                   <motion.div
                     key="payment-step"
@@ -297,11 +452,18 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     className="space-y-12"
                   >
                     <button 
-                      onClick={() => setIsPaymentStep(false)}
+                      onClick={() => {
+                        if (user) {
+                          setStep('cart');
+                        } else {
+                          setStep('details');
+                        }
+                      }}
                       className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
+                      aria-label="Go back to previous step"
                     >
                       <ChevronLeft className="w-4 h-4" />
-                      <span>Back to Ledger</span>
+                      <span>Back</span>
                     </button>
 
                     <div className="space-y-4">
@@ -314,7 +476,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
 
                     <div className="space-y-10">
                       <div className="space-y-4">
-                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">Network Provider</label>
+                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4 block">Network Provider</label>
                         <div className="grid grid-cols-3 gap-4">
                           {[
                             { id: 'mtn', label: 'MTN' },
@@ -325,7 +487,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                               key={p.id}
                               onClick={() => setMomoProvider(p.id as any)}
                               className={cn(
-                                "relative py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest",
+                                "relative py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest min-h-[44px]",
                                 momoProvider === p.id 
                                   ? "border-accent bg-accent/10 text-white" 
                                   : "border-white/5 bg-white/5 text-white/40 hover:border-white/10"
@@ -338,10 +500,11 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                       </div>
 
                       <div className="space-y-4">
-                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">MoMo Number</label>
+                        <label htmlFor="momo-number" className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4 block">MoMo Number</label>
                         <div className="relative group">
                           <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
                           <input 
+                            id="momo-number"
                             type="tel"
                             placeholder="0XX XXX XXXX"
                             value={momoNumber}
@@ -357,6 +520,12 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                         <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Kingdom Assets</span>
                         <span className="text-[11px] font-black text-white">{items.length} Units</span>
                       </div>
+                      {(!user && guestName) && (
+                        <div className="flex justify-between items-center pb-4 border-b border-white/5">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Authenticated Guest</span>
+                          <span className="text-[11px] font-black text-white">{guestName}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-center">
                         <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Deposit</span>
                         <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice * 0.5)}</span>
@@ -374,13 +543,14 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                   <input 
                     type="text"
                     placeholder="LOYALTY PROTOCOL"
+                    aria-label="Coupon Discount Code"
                     value={couponCode}
                     onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                     className="flex-1 bg-transparent border-none outline-none text-[10px] font-black uppercase tracking-widest px-4 text-white placeholder:text-white/20"
                   />
                   <button 
                     onClick={handleApplyCoupon}
-                    className="bg-accent text-black px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all"
+                    className="bg-accent text-black px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all min-h-[44px]"
                   >
                     Verify
                   </button>
@@ -405,14 +575,16 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                 <button
                   onClick={handleCheckout}
                   disabled={isOrdering}
-                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl active:scale-95 disabled:opacity-50"
+                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl active:scale-95 disabled:opacity-50 min-h-[44px]"
                 >
                   {isOrdering ? (
                     <RefreshCw className="w-5 h-5 animate-spin" />
                   ) : (
                     <>
                       <Zap className="w-5 h-5" />
-                      <span>{isPaymentStep ? 'Initialize Secure Build' : 'Authorize Production'}</span>
+                      <span>
+                        {step === 'payment' ? 'Initialize Secure Build' : step === 'details' ? 'Confirm Credentials' : 'Authorize Production'}
+                      </span>
                     </>
                   )}
                 </button>

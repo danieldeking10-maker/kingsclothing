@@ -22,7 +22,7 @@ export function useProductPreloader(options: PreloadOptions = {}) {
     img.src = url;
   }, []);
 
-  // Preloads all key images for a product blueprint (primary mockup + color variant images)
+  // Preloads all key images for a product blueprint (primary mockup, color images, blueprint, and studio images)
   const preloadProduct = useCallback((product: any) => {
     if (!product) return;
 
@@ -33,9 +33,35 @@ export function useProductPreloader(options: PreloadOptions = {}) {
       urlsToPreload.push(product.mockupImage);
     }
 
-    // 2. All color variant images
+    // 2. Blueprint / Studio fallback images
+    if (product.blueprintImage) {
+      urlsToPreload.push(product.blueprintImage);
+    }
+    if (product.studioImage) {
+      urlsToPreload.push(product.studioImage);
+    }
+
+    // 3. All color variant mockup images
     if (product.colorImages && typeof product.colorImages === 'object') {
       Object.values(product.colorImages).forEach((imgUrl: any) => {
+        if (typeof imgUrl === 'string' && imgUrl) {
+          urlsToPreload.push(imgUrl);
+        }
+      });
+    }
+
+    // 4. All color blueprint images
+    if (product.colorBlueprints && typeof product.colorBlueprints === 'object') {
+      Object.values(product.colorBlueprints).forEach((imgUrl: any) => {
+        if (typeof imgUrl === 'string' && imgUrl) {
+          urlsToPreload.push(imgUrl);
+        }
+      });
+    }
+
+    // 5. All color studio images
+    if (product.colorStudioImages && typeof product.colorStudioImages === 'object') {
+      Object.values(product.colorStudioImages).forEach((imgUrl: any) => {
         if (typeof imgUrl === 'string' && imgUrl) {
           urlsToPreload.push(imgUrl);
         }
