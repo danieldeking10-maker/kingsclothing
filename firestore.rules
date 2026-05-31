@@ -83,9 +83,12 @@ service cloud.firestore {
     function isValidNotification(data) {
       return data.title is string && data.title.size() > 0 && data.title.size() <= 200
         && data.message is string && data.message.size() <= 1000
-        && data.type in ["promotion", "coupon", "general"]
+        && data.type in ["promotion", "coupon", "general", "order"]
         && (data.discountPercentage == null || data.discountPercentage is number)
         && (data.code == null || data.code is string)
+        && (data.userId == null || data.userId is string)
+        && (data.orderId == null || data.orderId is string)
+        && (data.status == null || data.status is string)
         && data.createdAt == request.time;
     }
 
@@ -170,7 +173,7 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if true;
-      allow write: if isAdmin() && isValidNotification(incoming());
+      allow write: if (isAdmin() || (isSignedIn() && incoming().userId == request.auth.uid)) && isValidNotification(incoming());
     }
 
     match /test/{docId} {

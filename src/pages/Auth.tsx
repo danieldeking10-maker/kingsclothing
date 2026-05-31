@@ -30,6 +30,7 @@ export function AuthPage() {
   const [name, setName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showIframeWarning, setShowIframeWarning] = useState(false);
 
   const getPasswordStrength = () => {
     if (!password) return 0;
@@ -148,17 +149,26 @@ export function AuthPage() {
     setIsLoading(true);
     setError(null);
     const provider = new GoogleAuthProvider();
+    const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
     try {
       const result = await signInWithPopup(auth, provider);
       await createProfile(result.user);
-      toast.success(`Welcome back, ${result.user.displayName}!`);
+      toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
       
       setTimeout(() => navigate(redirectPath), 500);
     } catch (error: any) {
       console.error('Google Sign In Error:', error);
-      const msg = error.code === 'auth/popup-blocked' 
-        ? 'Popup blocked by browser' 
-        : 'Google Sign-In failed';
+      
+      let msg = 'Google Sign-In failed';
+      if (error.code === 'auth/popup-blocked') {
+        msg = 'Popup blocked by browser';
+      } else if (isInIframe || error.code === 'auth/internal-error' || error.code === 'auth/network-request-failed' || error.code === 'auth/web-storage-unsupported') {
+        setShowIframeWarning(true);
+        msg = 'Sign-In handshakes restricted in iframe sandboxes';
+      } else if (error.message) {
+        msg = error.message;
+      }
+      
       setError(msg);
       toast.error(msg);
     } finally {
@@ -459,6 +469,29 @@ export function AuthPage() {
                   </div>
                   <Sparkles className="w-4 h-4 text-accent opacity-0 group-hover:opacity-100 transition-opacity" />
                 </motion.button>
+
+                {typeof window !== 'undefined' && window.self !== window.top && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-5 bg-accent/[0.03] border border-accent/20 rounded-[1.5rem] space-y-2 mt-4"
+                  >
+                    <div className="flex items-center gap-2 text-accent">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span className="text-[9px] font-black uppercase tracking-widest italic">Iframe Preview Mode Active</span>
+                    </div>
+                    <p className="text-[8.5px] text-white/30 uppercase font-black tracking-widest leading-relaxed">
+                      Modern browsers block Google credentials inside embedded previews. For instant auth, complete sign-in in a new tab.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => window.open(window.location.href, '_blank')}
+                      className="text-[9.5px] font-black uppercase tracking-[0.15em] text-accent hover:underline flex items-center gap-1 cursor-pointer mt-1"
+                    >
+                      Open App in New Tab <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </motion.div>
+                )}
               </motion.div>
             </form>
 
@@ -487,6 +520,70 @@ export function AuthPage() {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showIframeWarning && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/95 backdrop-blur-2xl flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="max-w-md w-full glass border border-accent/30 rounded-[2.5rem] p-10 space-y-8 text-center shadow-[0_0_80px_rgba(234,179,8,0.15)] bg-[#0F0F10]"
+            >
+              <div className="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mx-auto text-accent mb-4 animate-pulse">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+              
+              <div className="space-y-3">
+                <span className="text-accent text-[10px] font-black uppercase tracking-editorial block italic font-sans">
+                  Iframe Security Protocol
+                </span>
+                <h3 className="text-2xl font-display font-black uppercase tracking-tighter italic leading-none text-white">
+                  Google Sign-In Blocked
+                </h3>
+               <p className="text-white/30 text-[10px] font-black uppercase tracking-widest">
+                  Authentication handshakes are restricted in embedded preview frames.
+               </p>
+              </div>
+
+              <div className="space-y-4 p-6 bg-white/[0.02] border border-white/5 rounded-2xl text-left">
+                <p className="text-[10px] text-white/60 uppercase font-black tracking-widest leading-relaxed">
+                  Your browser's privacy controls (Storage Partitioning) prevent Google OAuth from storing session keys inside the iframe context.
+                </p>
+                <div className="flex items-start gap-3 text-accent text-[9px] uppercase font-black tracking-widest leading-normal">
+                  <Zap className="w-3.5 h-3.5 shrink-0 animate-pulse mt-0.5" />
+                  <span>The fix is automatic: open the application in a new dedicated tab, authenticate, and then you can continue there or return here!</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button
+                  type="button"
+                  onClick={() => setShowIframeWarning(false)}
+                  className="bg-white/5 text-white/60 p-4.5 rounded-2xl font-black uppercase tracking-widest text-[9.5px] hover:bg-white/10 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowIframeWarning(false);
+                    window.open(window.location.href, '_blank');
+                  }}
+                  className="bg-accent text-black p-4.5 rounded-2xl font-black uppercase tracking-widest text-[9.5px] flex items-center justify-center gap-2 hover:shadow-[0_15px_30px_rgba(234,179,8,0.2)] transition-all"
+                >
+                  Open in New Tab <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

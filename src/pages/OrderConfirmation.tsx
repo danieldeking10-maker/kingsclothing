@@ -21,7 +21,7 @@ import {
   RefreshCw,
   Printer
 } from 'lucide-react';
-import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { formatGHC, cn } from '@/src/lib/utils';
@@ -159,6 +159,19 @@ export function OrderConfirmationPage() {
           paymentConfirmedAt: new Date().toISOString()
         });
 
+        // Trigger notification for order status change (processing)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Payment confirmed! Your order #${id.slice(0, 8)} is now being styled and printed.`;
+        transaction.set(notifRef, {
+          title: `Order Status: PROCESSING`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: id,
+          status: 'processing',
+          createdAt: serverTimestamp()
+        });
+
         // 2. Update Agent Profile Stats (The person who made the purchase)
         if (orderData.customerId) {
           const agentRef = doc(db, 'agents', orderData.customerId);
@@ -208,6 +221,19 @@ export function OrderConfirmationPage() {
         transaction.update(orderRef, {
           status: 'cancelled',
           cancelledAt: new Date().toISOString()
+        });
+
+        // Trigger notification for order status change (cancelled)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Order #${id.slice(0, 8)} has been cancelled.`;
+        transaction.set(notifRef, {
+          title: `Order Status: CANCELLED`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: id,
+          status: 'cancelled',
+          createdAt: serverTimestamp()
         });
 
         // 2. Deduct from salesCount for each product

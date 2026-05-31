@@ -89,14 +89,17 @@
     },
     "Notification": {
       "title": "Notification",
-      "description": "App broadcast alerts regarding new promotions and discounts.",
+      "description": "App alerts regarding promotions, coupons, and order status changes.",
       "type": "object",
       "properties": {
         "title": { "type": "string" },
         "message": { "type": "string" },
-        "type": { "type": "string", "enum": ["promotion", "coupon", "general"] },
+        "type": { "type": "string", "enum": ["promotion", "coupon", "general", "order"] },
         "discountPercentage": { "type": ["number", "null"] },
         "code": { "type": ["string", "null"] },
+        "userId": { "type": ["string", "null"] },
+        "orderId": { "type": ["string", "null"] },
+        "status": { "type": ["string", "null"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "message", "type", "createdAt"]

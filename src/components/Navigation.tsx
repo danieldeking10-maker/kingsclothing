@@ -46,35 +46,54 @@ export function Header() {
   });
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'notifications'),
-      orderBy('createdAt', 'desc'),
-      limit(15)
-    );
+    let q;
+    if (user) {
+      q = query(
+        collection(db, 'notifications'),
+        where('userId', 'in', ['global', user.uid])
+      );
+    } else {
+      q = query(
+        collection(db, 'notifications'),
+        where('userId', '==', 'global')
+      );
+    }
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docsList = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      setNotifications(docsList);
 
-      if (docsList.length > 0) {
+      // Sort client-side by createdAt descending to avoid composite index requirements
+      docsList.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return timeB - timeA;
+      });
+
+      // Limit to 15 notifications max
+      const limitedDocs = docsList.slice(0, 15);
+      setNotifications(limitedDocs);
+
+      if (limitedDocs.length > 0) {
         let unread = 0;
-        docsList.forEach((notif: any) => {
+        limitedDocs.forEach((notif: any) => {
           const creationMs = notif.createdAt?.toMillis ? notif.createdAt.toMillis() : Date.now();
           if (creationMs > lastSeenTime) {
             unread++;
           }
         });
         setUnreadCount(unread);
+      } else {
+        setUnreadCount(0);
       }
     }, (error) => {
-      console.error("Notifications listener failed:", error);
+      console.warn("Notifications listener failed:", error);
     });
 
     return () => unsubscribe();
-  }, [lastSeenTime]);
+  }, [lastSeenTime, user]);
 
   const handleOpenNotifications = () => {
     setIsNotificationsOpen(!isNotificationsOpen);
@@ -496,7 +515,16 @@ export function Header() {
                         notifications.map((notif: any) => (
                           <div 
                             key={notif.id} 
-                            className="p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] hover:border-accent/20 transition-all group"
+                            onClick={() => {
+                              if (notif.orderId) {
+                                navigate(`/order/${notif.orderId}`);
+                                setIsNotificationsOpen(false);
+                              }
+                            }}
+                            className={cn(
+                              "p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] transition-all group text-left",
+                              notif.orderId ? "cursor-pointer hover:border-accent/30" : "hover:border-accent/10"
+                            )}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
@@ -504,9 +532,13 @@ export function Header() {
                                   <>
                                     <Tag className="w-3 h-3" /> Promotion
                                   </>
-                                ) : (
+                                ) : notif.type === 'coupon' ? (
                                   <>
                                     <Gift className="w-3 h-3" /> Coupon Code
+                                  </>
+                                ) : (
+                                  <>
+                                    <Package className="w-3 h-3 animate-pulse" /> Order Update
                                   </>
                                 )}
                               </span>
@@ -609,7 +641,16 @@ export function Header() {
                         notifications.map((notif: any) => (
                           <div 
                             key={notif.id} 
-                            className="p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 text-left"
+                            onClick={() => {
+                              if (notif.orderId) {
+                                navigate(`/order/${notif.orderId}`);
+                                setIsMenuOpen(false);
+                              }
+                            }}
+                            className={cn(
+                              "p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] transition-all group text-left",
+                              notif.orderId ? "cursor-pointer hover:border-accent/30" : "hover:border-accent/10"
+                            )}
                           >
                             <div className="flex items-start justify-between gap-2">
                               <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
@@ -617,9 +658,13 @@ export function Header() {
                                   <>
                                     <Tag className="w-3 h-3" /> Promotion
                                   </>
+                                ) : notif.type === 'coupon' ? (
+                                  <>
+                                    <Gift className="w-3 h-3" /> Coupon Code
+                                  </>
                                 ) : (
                                   <>
-                                    <Gift className="w-3 h-3" /> coupon
+                                    <Package className="w-3 h-3 animate-pulse" /> Order Update
                                   </>
                                 )}
                               </span>

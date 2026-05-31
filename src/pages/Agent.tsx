@@ -1162,6 +1162,31 @@ export function AgentPortal() {
           updatedAt: serverTimestamp()
         });
 
+        // Trigger notification for order status change
+        const notifRef = doc(collection(db, 'notifications'));
+        let notifMessage = `Your order #${orderId.slice(0, 8)} status has updated to ${newStatus.toUpperCase()}.`;
+        if (newStatus === 'processing') {
+          notifMessage = `Payment confirmed! Your order #${orderId.slice(0, 8)} is now being styled and printed.`;
+        } else if (newStatus === 'shipped') {
+          notifMessage = `Royal shipment active! Status of order #${orderId.slice(0, 8)} has been upgraded to SHIPPED.`;
+        } else if (newStatus === 'cancelled') {
+          notifMessage = `Order #${orderId.slice(0, 8)} has been cancelled.`;
+        } else if (newStatus === 'delivered') {
+          notifMessage = `Your order #${orderId.slice(0, 8)} has been delivered!`;
+        } else if (newStatus === 'completed') {
+          notifMessage = `Your order #${orderId.slice(0, 8)} is now completed!`;
+        }
+
+        transaction.set(notifRef, {
+          title: `Order Status: ${newStatus.toUpperCase()}`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: orderId,
+          status: newStatus,
+          createdAt: serverTimestamp()
+        });
+
         // Handle Stats based on status transition
         if (orderData.customerId) {
           const agentRef = doc(db, 'agents', orderData.customerId);

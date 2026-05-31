@@ -612,6 +612,19 @@ export function ProductPage() {
                   usageCount: increment(1)
                 });
               }
+
+              // Trigger notification for order status change (pending)
+              const notifRef = doc(collection(db, 'notifications'));
+              const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+              transaction.set(notifRef, {
+                title: `Order Status: PENDING`,
+                message: notifMessage,
+                type: 'order',
+                userId: orderData.customerId || 'global',
+                orderId: orderId,
+                status: 'pending',
+                createdAt: serverTimestamp()
+              });
             });
 
             toast.dismiss(loadingToast);
