@@ -1,8 +1,11 @@
-import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
+import { initPaystackMock } from './lib/paystackMock';
+
+// Initialize Simulated Gateway Fallback for sandbox environments
+initPaystackMock();
 
 // Register PWA service worker with auto-update
 const updateSW = registerSW({
@@ -15,7 +18,5 @@ const updateSW = registerSW({
 });
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <App />
 );

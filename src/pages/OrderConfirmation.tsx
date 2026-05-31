@@ -27,6 +27,7 @@ import { useAuth } from '../lib/AuthContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
+import { initPaystackMock } from '../lib/paystackMock';
 
 const STEPS = [
   { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting deposit verify' },
@@ -79,6 +80,29 @@ export function OrderConfirmationPage() {
     setIsAlerting(true);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
+    const handlePaymentSuccess = async (response: any) => {
+      toast.dismiss(loadingToast);
+      toast.success('Payment Received Successfully');
+      setIsAlerting(false);
+      if (id) {
+         try {
+            await updateDoc(doc(db, 'orders', id), {
+              paymentMethod: 'momo',
+              paystackReference: response.reference || response.id || 'N/A'
+            });
+         } catch (dbErr) {
+            console.error("Failed to update payment details on document:", dbErr);
+         }
+      }
+      await handleConfirmPayment();
+    };
+
+    const handlePaymentClosed = () => {
+      setIsAlerting(false);
+      toast.dismiss(loadingToast);
+      toast.error('Transaction Terminated by User');
+    };
+
     try {
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
@@ -87,29 +111,14 @@ export function OrderConfirmationPage() {
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
         ref: order?.id || '',
-        callback: async (response: any) => {
-          toast.dismiss(loadingToast);
-          toast.success('Payment Received Successfully');
-          setIsAlerting(false);
-          if (id) {
-             try {
-                await updateDoc(doc(db, 'orders', id), {
-                  paymentMethod: 'momo',
-                  paystackReference: response.reference || response.id || 'N/A'
-                });
-             } catch (dbErr) {
-                console.error("Failed to update payment details on document:", dbErr);
-             }
-          }
-          await handleConfirmPayment();
-        },
-        onClose: () => {
-          setIsAlerting(false);
-          toast.dismiss(loadingToast);
-          toast.error('Transaction Terminated by User');
-        }
+        reference: order?.id || '',
+        callback: handlePaymentSuccess,
+        onSuccess: handlePaymentSuccess,
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
       };
 
+      initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
     } catch (error: any) {

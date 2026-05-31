@@ -9,6 +9,7 @@ import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTran
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { initPaystackMock } from '../lib/paystackMock';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -116,12 +117,95 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
     try {
       const referralId = sessionStorage.getItem('last_referral_id');
       const depositAmount = finalPrice * 0.5;
+      const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+
+      const handlePaymentSuccess = async (response: any) => {
+        const orderData = {
+          customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
+          customerName: user?.displayName || guestName || 'Guest Customer',
+          customerEmail: user?.email || guestEmail || 'guest@kingsclothing.brand',
+          isGuest: !user,
+          items: items.map(item => ({
+            productId: item.id,
+            name: item.name,
+            gsm: item.gsm,
+            color: item.color,
+            size: item.size,
+            price: item.price,
+            quantity: item.quantity
+          })),
+          totalAmount: finalPrice,
+          depositAmount: depositAmount,
+          discountApplied: totalPrice - finalPrice,
+          appliedCouponCode: appliedCoupon?.code || null,
+          status: 'pending',
+          paymentStatus: 'paid',
+          paystackReference: response.reference || response.id || genRef,
+          momoNumber: momoNumber,
+          momoProvider: momoProvider,
+          referralAgentId: referralId || null,
+          createdAt: serverTimestamp()
+        };
+
+        try {
+          const orderRef = doc(collection(db, 'orders'));
+          const orderId = orderRef.id;
+
+          await runTransaction(db, async (transaction) => {
+            transaction.set(orderRef, orderData);
+            
+            // 2. Increment salesCount for each product to track trending data
+            items.forEach(item => {
+              const productRef = doc(db, 'products', item.id);
+              transaction.update(productRef, {
+                salesCount: increment(item.quantity)
+              });
+            });
+
+            if (appliedCoupon) {
+              transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+                usageCount: increment(1)
+              });
+            }
+
+            // Trigger notification for order status change (pending)
+            const notifRef = doc(collection(db, 'notifications'));
+            const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+            transaction.set(notifRef, {
+              title: `Order Status: PENDING`,
+              message: notifMessage,
+              type: 'order',
+              userId: orderData.customerId || 'global',
+              orderId: orderId,
+              status: 'pending',
+              createdAt: serverTimestamp()
+            });
+          });
+
+          clearCart();
+          toast.dismiss(loadingToast);
+          toast.success('Capital Asset Secured');
+          navigate(`/order/${orderId}`);
+          onClose();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, 'orders');
+        }
+      };
+
+      const handlePaymentClosed = () => {
+        setIsOrdering(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
 
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
         email: user?.email || guestEmail || 'customer@kingsclothing.brand',
         amount: Math.round(depositAmount * 100), // convert to pesewas
         currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        ref: genRef,
+        reference: genRef,
         metadata: {
           custom_fields: [
             {
@@ -151,85 +235,13 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             }
           ]
         },
-        callback: async (response: any) => {
-          const orderData = {
-            customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
-            customerName: user?.displayName || guestName || 'Guest Customer',
-            customerEmail: user?.email || guestEmail || 'guest@kingsclothing.brand',
-            isGuest: !user,
-            items: items.map(item => ({
-              productId: item.id,
-              name: item.name,
-              gsm: item.gsm,
-              color: item.color,
-              size: item.size,
-              price: item.price,
-              quantity: item.quantity
-            })),
-            totalAmount: finalPrice,
-            depositAmount: depositAmount,
-            discountApplied: totalPrice - finalPrice,
-            appliedCouponCode: appliedCoupon?.code || null,
-            status: 'pending',
-            paymentStatus: 'paid',
-            paystackReference: response.reference,
-            momoNumber: momoNumber,
-            momoProvider: momoProvider,
-            referralAgentId: referralId || null,
-            createdAt: serverTimestamp()
-          };
-
-          try {
-            const orderRef = doc(collection(db, 'orders'));
-            const orderId = orderRef.id;
-
-            await runTransaction(db, async (transaction) => {
-              transaction.set(orderRef, orderData);
-              
-              // 2. Increment salesCount for each product to track trending data
-              items.forEach(item => {
-                const productRef = doc(db, 'products', item.id);
-                transaction.update(productRef, {
-                  salesCount: increment(item.quantity)
-                });
-              });
-
-              if (appliedCoupon) {
-                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-                  usageCount: increment(1)
-                });
-              }
-
-              // Trigger notification for order status change (pending)
-              const notifRef = doc(collection(db, 'notifications'));
-              const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
-              transaction.set(notifRef, {
-                title: `Order Status: PENDING`,
-                message: notifMessage,
-                type: 'order',
-                userId: orderData.customerId || 'global',
-                orderId: orderId,
-                status: 'pending',
-                createdAt: serverTimestamp()
-              });
-            });
-
-            clearCart();
-            toast.dismiss(loadingToast);
-            toast.success('Capital Asset Secured');
-            navigate(`/order/${orderId}`);
-            onClose();
-          } catch (error) {
-            handleFirestoreError(error, OperationType.CREATE, 'orders');
-          }
-        },
-        onClose: () => {
-          setIsOrdering(false);
-          toast.dismiss(loadingToast);
-          toast.error('Transaction Terminated by User');
-        }
+        callback: handlePaymentSuccess,
+        onSuccess: handlePaymentSuccess,
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
       };
 
+      initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
 

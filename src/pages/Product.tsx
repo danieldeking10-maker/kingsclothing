@@ -41,6 +41,7 @@ import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
 import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
+import { initPaystackMock } from '../lib/paystackMock';
 
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
@@ -544,6 +545,79 @@ export function ProductPage() {
     setIsPaymentModalOpen(false);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
     
+    const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+
+    const handlePaymentSuccess = async (response: any) => {
+      const orderData = {
+        customerId: user?.uid,
+        customerName: user?.displayName,
+        customerEmail: user?.email,
+        items: [{
+          productId: product.id,
+          name: product.name,
+          gsm: selectedGsm,
+          color: selectedColor.name,
+          size: selectedSize,
+          price: price,
+          quantity: quantity
+        }],
+        totalAmount: price * quantity,
+        depositAmount: deposit * quantity,
+        discountApplied: (basePrice - price) * quantity,
+        appliedPromotionId: activePromotion?.id || null,
+        appliedCouponCode: appliedCoupon?.code || null,
+        status: 'pending',
+        paymentStatus: 'paid',
+        paystackReference: response.reference || response.id || genRef,
+        momoNumber: momoNumber,
+        momoProvider: momoProvider,
+        referralAgentId: referralId || null,
+        createdAt: serverTimestamp()
+      };
+
+      try {
+        const orderRef = doc(collection(db, 'orders'));
+        const orderId = orderRef.id;
+
+        await runTransaction(db, async (transaction) => {
+          transaction.set(orderRef, orderData);
+          transaction.update(doc(db, 'products', product.id), {
+            salesCount: increment(quantity)
+          });
+          if (appliedCoupon) {
+            transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+              usageCount: increment(1)
+            });
+          }
+
+          // Trigger notification for order status change (pending)
+          const notifRef = doc(collection(db, 'notifications'));
+          const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+          transaction.set(notifRef, {
+            title: `Order Status: PENDING`,
+            message: notifMessage,
+            type: 'order',
+            userId: orderData.customerId || 'global',
+            orderId: orderId,
+            status: 'pending',
+            createdAt: serverTimestamp()
+          });
+        });
+
+        toast.dismiss(loadingToast);
+        toast.success('Capital Asset Secured');
+        navigate(`/order/${orderId}`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'orders');
+      }
+    };
+
+    const handlePaymentClosed = () => {
+      setIsOrdering(false);
+      toast.dismiss(loadingToast);
+      toast.error('Transaction Terminated by User');
+    };
+
     try {
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
@@ -551,6 +625,8 @@ export function ProductPage() {
         amount: Math.round(deposit * quantity * 100), // convert to pesewas
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
+        ref: genRef,
+        reference: genRef,
         metadata: {
           custom_fields: [
             {
@@ -570,77 +646,13 @@ export function ProductPage() {
             }
           ]
         },
-        callback: async (response: any) => {
-          const orderData = {
-            customerId: user?.uid,
-            customerName: user?.displayName,
-            customerEmail: user?.email,
-            items: [{
-              productId: product.id,
-              name: product.name,
-              gsm: selectedGsm,
-              color: selectedColor.name,
-              size: selectedSize,
-              price: price,
-              quantity: quantity
-            }],
-            totalAmount: price * quantity,
-            depositAmount: deposit * quantity,
-            discountApplied: (basePrice - price) * quantity,
-            appliedPromotionId: activePromotion?.id || null,
-            appliedCouponCode: appliedCoupon?.code || null,
-            status: 'pending',
-            paymentStatus: 'paid',
-            paystackReference: response.reference,
-            momoNumber: momoNumber,
-            momoProvider: momoProvider,
-            referralAgentId: referralId || null,
-            createdAt: serverTimestamp()
-          };
-
-          try {
-            const orderRef = doc(collection(db, 'orders'));
-            const orderId = orderRef.id;
-
-            await runTransaction(db, async (transaction) => {
-              transaction.set(orderRef, orderData);
-              transaction.update(doc(db, 'products', product.id), {
-                salesCount: increment(quantity)
-              });
-              if (appliedCoupon) {
-                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-                  usageCount: increment(1)
-                });
-              }
-
-              // Trigger notification for order status change (pending)
-              const notifRef = doc(collection(db, 'notifications'));
-              const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
-              transaction.set(notifRef, {
-                title: `Order Status: PENDING`,
-                message: notifMessage,
-                type: 'order',
-                userId: orderData.customerId || 'global',
-                orderId: orderId,
-                status: 'pending',
-                createdAt: serverTimestamp()
-              });
-            });
-
-            toast.dismiss(loadingToast);
-            toast.success('Capital Asset Secured');
-            navigate(`/order/${orderId}`);
-          } catch (error) {
-            handleFirestoreError(error, OperationType.CREATE, 'orders');
-          }
-        },
-        onClose: () => {
-          setIsOrdering(false);
-          toast.dismiss(loadingToast);
-          toast.error('Transaction Terminated by User');
-        }
+        callback: handlePaymentSuccess,
+        onSuccess: handlePaymentSuccess,
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
       };
 
+      initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
       
