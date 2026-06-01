@@ -48,6 +48,7 @@ import { cn, formatGHC } from '@/src/lib/utils';
 import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
 import { DesignMetadataModal } from '../components/DesignMetadataModal';
 import { ImageCropModal } from '../components/ImageCropModal';
+import { AdminAnalyticsDashboard } from '../components/AdminAnalyticsDashboard';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -80,8 +81,33 @@ interface DesignAuthorityCardProps {
 
 const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpdatingAsset, handleUpdateAsset, handleUpdateProductStatus, handleDeleteProduct, onCalibrate }) => {
   const [view, setView] = useState<'mockup' | 'studio' | 'blueprint'>('mockup');
+  const [isIntersecting, setIsIntersecting] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const updateInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsIntersecting(true);
+          observer.disconnect();
+        }
+      },
+      {
+        rootMargin: '120px',
+        threshold: 0.01,
+      }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   return (
     <motion.div 
@@ -92,39 +118,40 @@ const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpd
       exit={{ opacity: 0, scale: 0.9 }}
       className="glass p-6 rounded-[2rem] border border-white/5 hover:border-accent/20 transition-all flex flex-col group"
     >
-      <div className="relative aspect-square rounded-2xl overflow-hidden mb-6 bg-black/40">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={view}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="w-full h-full"
-          >
-            <img 
-              referrerPolicy="no-referrer"
-              src={
-                view === 'mockup' ? design.mockupImage : 
-                view === 'studio' ? (design.studioImage || design.mockupImage) :
-                (design.blueprintImage || design.mockupImage)
-              } 
-              alt="" 
-              className={cn(
-                "w-full h-full object-cover transition-all",
-                view === 'mockup' ? "grayscale group-hover:grayscale-0" : ""
-              )} 
-            />
-            {/* Upload Trigger for specific view */}
-            <button 
-              onClick={() => updateInputRef.current?.click()}
-              className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <div className="bg-accent p-3 rounded-full shadow-2xl">
-                <Upload className={cn("w-6 h-6 text-black", isUpdatingAsset && "animate-spin")} />
-              </div>
-            </button>
-          </motion.div>
-        </AnimatePresence>
+      <div 
+        ref={cardRef}
+        className="relative aspect-square rounded-2xl overflow-hidden mb-6 bg-black/40"
+      >
+        {!isIntersecting && (
+          <div className="absolute inset-0 bg-white/5 animate-pulse flex items-center justify-center z-10">
+            <ImageIcon className="w-8 h-8 text-white/10" />
+          </div>
+        )}
+
+        <img 
+          referrerPolicy="no-referrer"
+          src={isIntersecting ? (
+            view === 'mockup' ? design.mockupImage : 
+            view === 'studio' ? (design.studioImage || design.mockupImage) :
+            (design.blueprintImage || design.mockupImage)
+          ) : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'}
+          alt={design.name || ''} 
+          className={cn(
+            "w-full h-full object-cover transition-all duration-1000",
+            view === 'mockup' ? "grayscale group-hover:grayscale-0" : "",
+            isIntersecting ? "opacity-100 blur-0 scale-100" : "opacity-0 blur-sm scale-95"
+          )} 
+        />
+
+        {/* Upload Trigger for specific view */}
+        <button 
+          onClick={() => updateInputRef.current?.click()}
+          className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+        >
+          <div className="bg-accent p-3 rounded-full shadow-2xl">
+            <Upload className={cn("w-6 h-6 text-black", isUpdatingAsset && "animate-spin")} />
+          </div>
+        </button>
 
         <input 
           type="file" 
@@ -1149,6 +1176,8 @@ export function AgentPortal() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!isBrandOwner) return;
     try {
+      let orderToNotify: any = null;
+
       await runTransaction(db, async (transaction) => {
         const orderRef = doc(db, 'orders', orderId);
         const orderSnap = await transaction.get(orderRef);
@@ -1238,9 +1267,56 @@ export function AgentPortal() {
             }
           }
         }
+
+        // Check if status transitioned from 'pending' to 'processing' or 'shipped'
+        if (oldStatus === 'pending' && (newStatus === 'processing' || newStatus === 'shipped')) {
+          orderToNotify = {
+            orderId,
+            customerName: orderData.customerName || 'Customer',
+            customerEmail: orderData.customerEmail || 'no-reply@kingsclothing.brand',
+            momoNumber: orderData.momoNumber || '',
+            status: newStatus,
+            items: orderData.items || [],
+            totalAmount: orderData.totalAmount || 0
+          };
+        }
       });
 
       toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
+
+      // If transition requires notification and transacted successfully, dispatch notification
+      if (orderToNotify) {
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(orderToNotify)
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              throw new Error(await res.text());
+            }
+            return res.json();
+          })
+          .then((data) => {
+            if (data.email?.error?.includes('missing') || data.sms?.error?.includes('missing')) {
+              toast.success('Simulation Mode: Check the server console for full email & SMS design payloads!', {
+                duration: 6000,
+                icon: 'ℹ️'
+              });
+            } else {
+              const smsStatus = data.sms?.dispatched ? 'dispatched' : 'scaled back';
+              const emailStatus = data.email?.dispatched ? 'dispatched' : 'scaled back';
+              toast.success(`Notifications sent (SMS: ${smsStatus}, Email: ${emailStatus})`, {
+                icon: '✉️'
+              });
+            }
+          })
+          .catch((err) => {
+            console.error('Failed to dispatch order status notifications:', err);
+          });
+      }
     } catch (error: any) {
       toast.error('Update failed: ' + error.message);
     }
@@ -3076,142 +3152,19 @@ export function AgentPortal() {
                         </div>
                      </div>
                   </div>
-               </section>
-            )}
+                </section>
+             )}
 
-            {/* Sovereign Operational Velocity (30-Day Trend Chart) */}
+            {/* Sovereign Operational Velocity (Admin Analytics Dashboard) */}
             {isBrandOwner && (
-               <section id="operational-velocity" className="bg-[#0F0F10] border border-white/10 p-8 md:p-16 rounded-[3.5rem] text-white space-y-12 shadow-[0_0_80px_rgba(242,125,38,0.03)] relative overflow-hidden mb-24">
-                  <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
-                     <Activity className="w-40 h-40 text-accent" strokeWidth={1} />
-                  </div>
-                  
-                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 pb-8 border-b border-white/5 relative z-10">
-                     <div className="flex items-center space-x-6">
-                        <div className="bg-accent/20 p-5 rounded-3xl border border-accent/20 text-accent">
-                           <Activity className="w-10 h-10" />
-                        </div>
-                        <div>
-                           <h2 className="text-4xl font-display font-black uppercase italic tracking-tighter">Operational Velocity<span className="text-accent">.</span></h2>
-                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 italic">30-Day Commander Insights Matrix</p>
-                        </div>
-                     </div>
-                     
-                     <div className="flex flex-wrap gap-4">
-                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
-                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1 flex items-center justify-center gap-1.5">
-                              <span className="w-1.5 h-1.5 bg-accent rounded-full" /> 30D Revenue
-                           </p>
-                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.totalRevenue)}</p>
-                        </div>
-                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
-                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1 flex items-center justify-center gap-1.5">
-                              <span className="w-1.5 h-1.5 bg-white/40 rounded-full" /> 30D Volume
-                           </p>
-                           <p className="text-2xl font-mono font-black text-accent">{owner30DayStats.totalVolume} Orders</p>
-                        </div>
-                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
-                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Average Order Value</p>
-                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.aov)}</p>
-                        </div>
-                        <div className="bg-white/5 border border-white/10 p-6 rounded-2xl text-center min-w-[150px]">
-                           <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Daily Peak</p>
-                           <p className="text-2xl font-mono font-black text-white">{formatGHC(owner30DayStats.peakDailySales)}</p>
-                        </div>
-                     </div>
-                  </div>
-
-                  {/* Recharts Component */}
-                  <div className="bg-black/40 rounded-[2.5rem] border border-white/5 p-6 md:p-10 relative z-10">
-                     <div className="h-[400px] w-full">
-                        {owner30DayTrendData.length === 0 ? (
-                           <div className="h-full flex flex-col items-center justify-center text-white/10">
-                              <Clock className="w-12 h-12 mb-4 animate-pulse" />
-                              <p className="text-xs font-black uppercase tracking-widest">No order data logged in matching timeline.</p>
-                           </div>
-                        ) : (
-                           <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={owner30DayTrendData} margin={{ top: 20, right: 35, left: 10, bottom: 10 }}>
-                                 <defs>
-                                    <linearGradient id="revenueGlow" x1="0" y1="0" x2="0" y2="1">
-                                       <stop offset="5%" stopColor="#f27d26" stopOpacity={0.2}/>
-                                       <stop offset="95%" stopColor="#f27d26" stopOpacity={0}/>
-                                    </linearGradient>
-                                 </defs>
-                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
-                                 <XAxis 
-                                    dataKey="dateStr" 
-                                    axisLine={false} 
-                                    tickLine={false} 
-                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }} 
-                                    dy={10}
-                                 />
-                                 <YAxis 
-                                    yAxisId="left"
-                                    axisLine={false} 
-                                    tickLine={false} 
-                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }}
-                                    label={{ value: 'Revenue (GHS)', angle: -90, position: 'insideLeft', fill: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: 900, offset: 0 }}
-                                 />
-                                 <YAxis 
-                                    yAxisId="right"
-                                    orientation="right"
-                                    axisLine={false} 
-                                    tickLine={false} 
-                                    tick={{ fill: 'rgba(255,255,255,0.2)', fontSize: 9, fontWeight: 900 }}
-                                    label={{ value: 'Orders Volume', angle: 90, position: 'insideRight', fill: 'rgba(255,255,255,0.3)', fontSize: 8, fontWeight: 900, offset: 5 }}
-                                 />
-                                 <Tooltip 
-                                    content={({ active, payload, label }) => {
-                                       if (active && payload && payload.length) {
-                                          const revVal = payload.find(p => p.dataKey === 'revenue')?.value || 0;
-                                          const volVal = payload.find(p => p.dataKey === 'volume')?.value || 0;
-                                          return (
-                                             <div className="bg-[#0c0c0d] border border-white/10 p-5 rounded-2xl shadow-2xl space-y-2 uppercase text-[9px] font-black">
-                                                <p className="text-white/40 border-b border-white/5 pb-1">{label}</p>
-                                                <div className="flex justify-between gap-6">
-                                                   <span className="text-white/60">Revenue:</span>
-                                                   <span className="text-accent">{formatGHC(Number(revVal))}</span>
-                                                </div>
-                                                <div className="flex justify-between gap-6">
-                                                   <span className="text-white/60">Orders:</span>
-                                                   <span className="text-white">{volVal} units</span>
-                                                </div>
-                                             </div>
-                                          );
-                                       }
-                                       return null;
-                                    }}
-                                 />
-                                 <Line 
-                                    yAxisId="left"
-                                    type="monotone" 
-                                    dataKey="revenue" 
-                                    stroke="#f27d26" 
-                                    strokeWidth={4}
-                                    dot={{ fill: '#f27d26', strokeWidth: 0, r: 4 }}
-                                    activeDot={{ r: 6, stroke: '#ffffff', strokeWidth: 2 }}
-                                    animationDuration={1500}
-                                    name="Revenue"
-                                 />
-                                 <Line 
-                                    yAxisId="right"
-                                    type="monotone" 
-                                    dataKey="volume" 
-                                    stroke="rgba(255,255,255,0.4)" 
-                                    strokeWidth={2}
-                                    strokeDasharray="4 4"
-                                    dot={{ fill: 'rgba(255,255,255,0.4)', strokeWidth: 0, r: 3 }}
-                                    activeDot={{ r: 5, stroke: '#f27d26', strokeWidth: 1 }}
-                                    animationDuration={2000}
-                                    name="Order Volume"
-                                 />
-                              </LineChart>
-                           </ResponsiveContainer>
-                        )}
-                     </div>
-                  </div>
-               </section>
+               <div className="mb-24">
+                  <AdminAnalyticsDashboard 
+                     allOrders={allOrders}
+                     allAgents={allAgents}
+                     allDesigns={allDesigns}
+                     agentPerformance={agentPerformance}
+                  />
+               </div>
             )}
 
             {/* Fulfillment Ledger (Brand Owner Only) */}
