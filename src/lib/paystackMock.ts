@@ -5,7 +5,7 @@
 export function initPaystackMock() {
   if (typeof window === 'undefined') return;
 
-  const rawKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
+  const rawKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
   const hostname = window.location.hostname || '';
   const isDevOrPreview = hostname === 'localhost' || 
                          hostname === '127.0.0.1' || 
@@ -82,7 +82,7 @@ function renderSimulatedGateway(config: any) {
 
       <!-- Amount Summary -->
       <div class="p-6 bg-white/[0.02] border border-white/5 rounded-3xl text-center space-y-1">
-        <span class="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">Pay Deposit Down-Payment</span>
+        <span class="text-[10px] font-black uppercase tracking-[0.3em] text-white/40">Secure Full Payment</span>
         <div class="text-3xl font-display font-black text-[#F27D26]">${formattedAmount}</div>
         <div class="text-[9px] font-mono tracking-wider text-white/20">${config.email}</div>
       </div>
@@ -209,7 +209,7 @@ function renderSimulatedGateway(config: any) {
 
     setTimeout(() => {
       destroyOverlay();
-      const mockRef = 'KNGS_DEPOSIT_PAY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+      const mockRef = 'KNGS_FULL_PAY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
       const mockResponse = {
         reference: mockRef,
         id: mockRef,

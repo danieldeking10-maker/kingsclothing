@@ -35,7 +35,7 @@ export const SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
 
 export const PAYMENT_MOBILE_MONEY = '0241953881';
 export const SUPPORT_INTERACTION_NUMBER = '0534717125';
-export const DEPOSIT_PERCENTAGE = 0.5;
+export const DEPOSIT_PERCENTAGE = 1.0;
 
 export const BANK_DETAILS = {
   accountName: 'Kings Clothing Enterprise',

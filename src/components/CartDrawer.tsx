@@ -116,7 +116,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
 
     try {
       const referralId = sessionStorage.getItem('last_referral_id');
-      const depositAmount = finalPrice * 0.5;
+      const depositAmount = finalPrice;
       const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
       const handlePaymentSuccess = async (response: any) => {
@@ -199,7 +199,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       };
 
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || guestEmail || 'customer@kingsclothing.brand',
         amount: Math.round(depositAmount * 100), // convert to pesewas
         currency: 'GHS',
@@ -552,8 +552,8 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                         </div>
                       )}
                       <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Deposit</span>
-                        <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice * 0.5)}</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Payment</span>
+                        <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice)}</span>
                       </div>
                     </div>
                   </motion.div>
@@ -592,8 +592,8 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     </div>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Required Deposit</p>
-                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(finalPrice * 0.5)}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Required Payment</p>
+                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(finalPrice)}</p>
                   </div>
                 </div>
 

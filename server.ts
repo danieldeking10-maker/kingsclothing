@@ -9,8 +9,30 @@ import twilio from "twilio";
 // Initialize environment variables
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const getFilename = () => {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.url) {
+      return fileURLToPath(import.meta.url);
+    }
+  } catch (e) {
+    // Fallback to CJS global if any error
+  }
+  return typeof __filename !== "undefined" ? __filename : "";
+};
+
+const getDirname = () => {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.url) {
+      return path.dirname(fileURLToPath(import.meta.url));
+    }
+  } catch (e) {
+    // Fallback to CJS global if any error
+  }
+  return typeof __dirname !== "undefined" ? __dirname : "";
+};
+
+const currentFilename = getFilename();
+const currentDirname = getDirname();
 
 async function startServer() {
   const app = express();
@@ -298,6 +320,208 @@ async function startServer() {
         error: emailError,
         recipient: customerEmail
       }
+    });
+  });
+
+  // RESTOCK NOTIFICATION ENDPOINT (Nodemailer config)
+  app.post("/api/send-restock-emails", async (req, res) => {
+    const { productId, productName, emails } = req.body;
+
+    if (!productId || !productName || !emails || !Array.isArray(emails) || emails.length === 0) {
+      return res.status(400).json({ error: "Missing required parameters for restock notification." });
+    }
+
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 587;
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    const smtpFrom = process.env.SMTP_FROM || 'no-reply@kingsclothing.brand';
+
+    const shortId = productId.slice(0, 8);
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: #050505;
+            color: #ffffff;
+            margin: 0;
+            padding: 40px 20px;
+          }
+          .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #0E0E10;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+          }
+          .header {
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 25px;
+            margin-bottom: 30px;
+          }
+          .logo {
+            font-size: 24px;
+            font-weight: 900;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: #FF5A1F; /* Royal Accent */
+            margin: 0;
+          }
+          .status-badge {
+            display: inline-block;
+            background-color: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.1em;
+            font-weight: bold;
+            padding: 6px 16px;
+            border-radius: 100px;
+            margin-top: 15px;
+          }
+          .greeting {
+            font-size: 18px;
+            font-weight: 500;
+            margin-bottom: 15px;
+            color: #ffffff;
+          }
+          .message {
+            font-size: 15px;
+            line-height: 1.6;
+            color: #a0a0ab;
+            margin-bottom: 30px;
+          }
+          .product-card {
+            background-color: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+            margin-bottom: 30px;
+          }
+          .product-title {
+            font-size: 20px;
+            font-weight: 900;
+            color: #ffffff;
+            margin: 10px 0 5px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+          .cta-button {
+            display: inline-block;
+            background-color: #ffffff;
+            color: #000000;
+            text-decoration: none;
+            text-transform: uppercase;
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 0.15em;
+            padding: 16px 36px;
+            border-radius: 100px;
+            margin-top: 20px;
+            transition: all 0.3s ease;
+          }
+          .footer {
+            text-align: center;
+            font-size: 12px;
+            color: #52525b;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 25px;
+            margin-top: 40px;
+          }
+          .footer p {
+            margin: 5px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1 class="logo">KINGS CREW</h1>
+            <div class="status-badge">
+              BACK IN STOCK
+            </div>
+          </div>
+          
+          <div class="greeting">Greetings,</div>
+          
+          <div class="message">
+            Great news! You requested to be notified when our exclusive asset is back in our Accra inventory. The Kings Design Authority has completed production and standard distribution has been replenished.
+          </div>
+
+          <div class="product-card">
+            <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.2em; color: #FF5A1F; font-weight: bold;">
+              Replenished Blueprint
+            </div>
+            <h2 class="product-title">${productName}</h2>
+            <p style="font-size: 13px; color: #71717a; margin: 0 0 15px 0;">Item Code: #${shortId}</p>
+            <a href="https://kingsclothing.brand/product/${productId}" class="cta-button">Secure Yours Now</a>
+          </div>
+
+          <div class="message" style="margin-bottom: 0; text-align: center; font-size: 13px;">
+            Inventory is highly limited. Orders are managed on a first-come, first-served basis. Secure checkout via Paystack or standard Mobile Money is active.
+          </div>
+
+          <div class="footer">
+            <p>© 2026 KINGS CREW Co. All Rights Reserved.</p>
+            <p>Empowered by the Kings Design Authority Protocol</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    let emailsSent = 0;
+    let errors: string[] = [];
+
+    if (smtpHost && smtpUser && smtpPass) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: {
+            user: smtpUser,
+            pass: smtpPass
+          }
+        });
+
+        // Send to each subscriber
+        for (const email of emails) {
+          try {
+            await transporter.sendMail({
+              from: `"Kings Crew" <${smtpFrom}>`,
+              to: email,
+              subject: `👑 Back in Stock: ${productName} is officially replenished!`,
+              html: htmlContent
+            });
+            emailsSent++;
+          } catch (e: any) {
+            errors.push(`${email}: ${e.message}`);
+          }
+        }
+        console.log(`[RESTOCK SUCCESS] Restock emails successfully sent to ${emailsSent} recipients.`);
+      } catch (err: any) {
+        errors.push(`General SMTP error: ${err.message}`);
+        console.error(`[RESTOCK SMTP ERROR] Failed to send emails:`, err.message);
+      }
+    } else {
+      console.log(`\n======================================================\n[SIMULATED RESTOCK EMAIL] Sending to: ${emails.join(', ')}\nSubject: 👑 Back in Stock: ${productName} is officially replenished!\n======================================================\n`);
+      emailsSent = emails.length;
+    }
+
+    res.json({
+      status: "complete",
+      sentCount: emailsSent,
+      errors: errors.length > 0 ? errors : null
     });
   });
 

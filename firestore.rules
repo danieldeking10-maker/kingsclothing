@@ -123,8 +123,9 @@ service cloud.firestore {
             (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
               'status', 'mockupImage', 'studioImage', 'blueprintImage', 'isPrivate', 
               'updatedAt', 'allowedColors', 'colorStudioImages', 'colorBlueprints', 
-              'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions', 'salesCount', 'aiTags'
+              'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions', 'salesCount', 'aiTags', 'outOfStock'
             ])) ||
+            (isOwner(existing().agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['outOfStock', 'updatedAt'])) ||
             (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
           ) && isValidProduct(incoming()))
         );
@@ -180,6 +181,16 @@ service cloud.firestore {
       allow create: if (isAdmin() || (isSignedIn() && (!('userId' in incoming()) || incoming().userId == request.auth.uid)) || incoming().type == "order") && isValidNotification(incoming());
       allow update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    match /restock_subscriptions/{subscriptionId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isValidId(subscriptionId)
+        && incoming().productId is string
+        && incoming().productName is string
+        && incoming().email is string && incoming().email.size() <= 200
+        && incoming().createdAt == request.time
+        && incoming().notified == false;
     }
 
     match /test/{docId} {

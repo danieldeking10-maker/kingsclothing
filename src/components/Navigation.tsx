@@ -1063,7 +1063,7 @@ export function Footer() {
         <div>
           <h3 className="text-xs font-black uppercase tracking-editorial text-accent mb-8">Structure</h3>
           <p className="text-white/50 text-[11px] mb-6 font-medium leading-relaxed uppercase tracking-tighter">
-            50% Initial Deposit required.<br/>Remaining 50% on Delivery.
+            100% Full Payment required.<br/>Secure Paystack & Mobile Money.
           </p>
           <div className="glass p-5 rounded-2xl">
             <p className="text-[10px] text-white/40 uppercase font-black tracking-widest mb-2 italic tracking-[0.3em]">Support Hotline</p>

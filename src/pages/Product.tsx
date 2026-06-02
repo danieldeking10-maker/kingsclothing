@@ -25,7 +25,9 @@ import {
   Camera,
   Wind,
   Layers,
-  Edit3
+  Edit3,
+  Mail,
+  Bell
 } from 'lucide-react';
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion, runTransaction, where, getDocs, limit } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
@@ -109,6 +111,14 @@ export function ProductPage() {
   const { addProduct } = useRecentlyViewed();
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [subscriberEmail, setSubscriberEmail] = useState('');
+  const [isSubscribing, setIsSubscribing] = useState(false);
+
+  useEffect(() => {
+    if (user?.email) {
+      setSubscriberEmail(user.email);
+    }
+  }, [user]);
   const [imageLoading, setImageLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'blueprint' | 'studio' | 'mockup'>('mockup');
   const [selectedGsm, setSelectedGsm] = useState<GSM>('260');
@@ -423,6 +433,89 @@ export function ProductPage() {
     toast.success(`Success: ${product.name} (x${quantity}) locked into cart`);
   };
 
+  const handleRestockSubscribe = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!product || !subscriberEmail) return;
+
+    setIsSubscribing(true);
+    const collectionPath = 'restock_subscriptions';
+
+    try {
+      await addDoc(collection(db, collectionPath), {
+        productId: product.id,
+        productName: product.name,
+        email: subscriberEmail.toLowerCase().trim(),
+        createdAt: serverTimestamp(),
+        notified: false
+      });
+      
+      toast.success(`Broadcasting restock alerts queued for ${subscriberEmail.toUpperCase()}`);
+      setSubscriberEmail('');
+    } catch (error: any) {
+      console.error('Subscription error:', error);
+      handleFirestoreError(error, OperationType.WRITE, collectionPath);
+    } finally {
+      setIsSubscribing(false);
+    }
+  };
+
+  const handleToggleStock = async () => {
+    if (!product || !id) return;
+    const path = `products/${id}`;
+    const newStockState = !product.outOfStock;
+    try {
+      // 1. Update stock in database
+      await updateDoc(doc(db, 'products', id), {
+        outOfStock: newStockState,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(newStockState ? 'Ledger: Product marked OUT OF STOCK' : 'Ledger: Product marked IN STOCK');
+
+      // 2. If transitioning back to "In Stock" (meaning we restocked), trigger the emails!
+      if (!newStockState) {
+        // Query subscriptions for this product that haven't been notified yet
+        const q = query(
+          collection(db, 'restock_subscriptions'),
+          where('productId', '==', id),
+          where('notified', '==', false)
+        );
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const emails = snapshot.docs.map(doc => doc.data().email);
+          
+          // Call nodemailer endpoint
+          const response = await fetch('/api/send-restock-emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              productId: id,
+              productName: product.name,
+              emails: emails
+            })
+          });
+
+          if (response.ok) {
+            // Update those subscriptions to notified: true
+            const batchPromises = snapshot.docs.map(d => 
+              updateDoc(doc(db, 'restock_subscriptions', d.id), {
+                notified: true,
+                notifiedAt: serverTimestamp()
+              })
+            );
+            await Promise.all(batchPromises);
+            toast.success(`Success: Sent notifications to ${emails.length} subscribers`);
+          } else {
+            console.error('Failed to dispatch alert emails');
+            toast.error('Alert dispatch experienced system latency');
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Stock modifier failure:', error);
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
+  };
+
   const handleShare = () => {
     setIsShareModalOpen(true);
   };
@@ -620,7 +713,7 @@ export function ProductPage() {
 
     try {
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || 'customer@kingsclothing.brand',
         amount: Math.round(deposit * quantity * 100), // convert to pesewas
         currency: 'GHS',
@@ -1005,9 +1098,17 @@ export function ProductPage() {
           {/* Right: Info & Config (Span 5) */}
           <div className="lg:col-span-5 flex flex-col pt-4">
             <div className="mb-12 relative">
-              <div className="flex items-center gap-4 mb-4">
+              <div className="flex items-center gap-4 mb-4 flex-wrap">
                 <span className="text-accent text-[10px] font-black uppercase tracking-editorial block">
                     {product.category} Series • {product.gender || 'unisex'}
+                </span>
+                <span className={cn(
+                  "text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md",
+                  product.outOfStock 
+                    ? "bg-red-500/15 text-red-400 border border-red-500/20 animate-pulse" 
+                    : "bg-green-500/15 text-green-400 border border-green-500/20"
+                )}>
+                  {product.outOfStock ? '🔴 OUT OF STOCK' : '🟢 IN STOCK'}
                 </span>
                 {reviews.length > 0 && (
                   <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
@@ -1192,23 +1293,35 @@ export function ProductPage() {
                   </div>
                   
                   {isBrandOwner && (
-                    <button 
-                      onClick={() => setIsPricingModalOpen(true)}
-                      className="absolute top-8 right-8 p-3 rounded-2xl bg-accent text-black hover:scale-110 transition-all shadow-xl flex items-center gap-2 group/edit"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                      <span className="text-[8px] font-black uppercase tracking-widest hidden group-hover/edit:block">Edit Price Logic</span>
-                    </button>
+                    <div className="absolute top-8 right-8 flex items-center gap-3">
+                      <button 
+                        onClick={handleToggleStock}
+                        className={cn(
+                          "p-3 rounded-2xl font-black uppercase tracking-widest text-[8px] transition-all flex items-center gap-2 shadow-xl hover:scale-110",
+                          product.outOfStock ? "bg-red-500 text-white" : "bg-white/5 border border-white/10 text-white/60 hover:text-white"
+                        )}
+                      >
+                        <Layers className="w-4 h-4" />
+                        <span>{product.outOfStock ? 'Mark In Stock' : 'Mark Out of Stock'}</span>
+                      </button>
+                      <button 
+                        onClick={() => setIsPricingModalOpen(true)}
+                        className="p-3 rounded-2xl bg-accent text-black hover:scale-110 transition-all shadow-xl flex items-center gap-2 group/edit"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                        <span className="text-[8px] font-black uppercase tracking-widest hidden group-hover/edit:block">Edit Price Logic</span>
+                      </button>
+                    </div>
                   )}
                   
                   <div className="grid grid-cols-2 gap-8 pt-8 border-t border-white/5">
                      <div className="space-y-1">
-                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Deposit (50%)</p>
+                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Full Payment</p>
                         <p className="text-2xl font-display font-black text-accent">{formatGHC(deposit)}</p>
                      </div>
                      <div className="space-y-1">
-                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Delivery (50%)</p>
-                        <p className="text-2xl font-display font-black text-white/60 tracking-tighter">{formatGHC(balance)}</p>
+                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Balance Due</p>
+                        <p className="text-2xl font-display font-black text-white/40 tracking-tighter">{formatGHC(balance)}</p>
                      </div>
                   </div>
                </div>
@@ -1386,42 +1499,83 @@ export function ProductPage() {
                   </button>
                </div>
 
-               <div className="flex items-center gap-4">
-                  <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
-                     <button 
-                        onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
-                     >
-                        <X className="w-4 h-4 rotate-45" />
-                     </button>
-                     <div className="flex-1 text-center">
-                        <span className="text-[14px] font-black font-mono text-white tracking-widest">{quantity.toString().padStart(2, '0')}</span>
-                        <p className="text-[7px] font-black uppercase text-white/20 tracking-widest leading-none mt-1">Units</p>
+                {product.outOfStock ? (
+                  <div className="space-y-4 p-8 bg-white/[0.01] border-2 border-dashed border-red-500/20 rounded-[2.5rem] relative overflow-hidden text-left">
+                     <div className="flex items-start gap-4 text-left">
+                        <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-400 shrink-0">
+                           <Bell className="w-5 h-5 animate-pulse" />
+                        </div>
+                        <div className="text-left">
+                           <p className="text-[10px] font-black uppercase tracking-widest text-[#FF5A1F] mb-1 italic">Back-in-Stock Transmission</p>
+                           <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Priority Re-supply Queue</h3>
+                           <p className="text-[10px] text-white/50 font-medium leading-relaxed uppercase tracking-tight mt-1">
+                              Sign up for automated dispatch updates. The design registry will transmit digital alerts immediately upon Accra workspace fabric replenishment.
+                           </p>
+                        </div>
+                     </div>
+                     <form onSubmit={handleRestockSubscribe} className="flex flex-col sm:flex-row gap-3 pt-2">
+                        <input 
+                           type="email"
+                           required
+                           value={subscriberEmail}
+                           onChange={(e) => setSubscriberEmail(e.target.value)}
+                           placeholder="ENTER MAIL CORRESPONDENCE ADDRESS"
+                           className="flex-1 bg-white/5 border border-white/15 rounded-full px-6 py-4 text-xs font-mono font-bold tracking-wider text-white placeholder-white/30 focus:outline-none focus:border-accent/40 uppercase"
+                        />
+                        <button
+                           type="submit"
+                           disabled={isSubscribing}
+                           className="bg-white text-black font-black uppercase text-[10px] tracking-widest px-8 py-5 h-[50px] rounded-full hover:bg-accent hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 shrink-0"
+                        >
+                           {isSubscribing ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                           ) : (
+                              <Mail className="w-3.5 h-3.5" />
+                           )}
+                           <span>Notify Me</span>
+                        </button>
+                     </form>
+                  </div>
+                ) : (
+                  <>
+                     <div className="flex items-center gap-4">
+                        <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
+                           <button 
+                              onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                              className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                           >
+                              <X className="w-4 h-4 rotate-45" />
+                           </button>
+                           <div className="flex-1 text-center">
+                              <span className="text-[14px] font-black font-mono text-white tracking-widest">{quantity.toString().padStart(2, '0')}</span>
+                              <p className="text-[7px] font-black uppercase text-white/20 tracking-widest leading-none mt-1">Units</p>
+                           </div>
+                           <button 
+                              onClick={() => setQuantity(quantity + 1)}
+                              className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                           >
+                              <X className="w-4 h-4" />
+                           </button>
+                        </div>
+                        <button 
+                          onClick={handleAddToCart}
+                          className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 h-[84px] rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
+                        >
+                           <ShoppingCart className="w-5 h-5 transition-transform group-hover:scale-110" />
+                           <span>Add to Cart</span>
+                        </button>
                      </div>
                      <button 
-                        onClick={() => setQuantity(quantity + 1)}
-                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                       id="main-buy-button"
+                       onClick={handleBuyNow}
+                       disabled={isOrdering}
+                       className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
                      >
-                        <X className="w-4 h-4" />
+                        {isOrdering ? <RefreshCw className="animate-spin w-5 h-5" /> : <Zap className="w-5 h-5 transition-transform group-hover:scale-110 group-hover:rotate-12" />}
+                        <span>Initialize Build (Full Payment)</span>
                      </button>
-                  </div>
-                  <button 
-                    onClick={handleAddToCart}
-                    className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 h-[84px] rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
-                  >
-                     <ShoppingCart className="w-5 h-5 transition-transform group-hover:scale-110" />
-                     <span>Add to Cart</span>
-                  </button>
-               </div>
-               <button 
-                 id="main-buy-button"
-                 onClick={handleBuyNow}
-                 disabled={isOrdering}
-                 className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
-               >
-                  {isOrdering ? <RefreshCw className="animate-spin w-5 h-5" /> : <Zap className="w-5 h-5 transition-transform group-hover:scale-110 group-hover:rotate-12" />}
-                  <span>Initialize Build (Deposit)</span>
-               </button>
+                  </>
+                )}
             </div>
 
             {/* Meta Info */}
@@ -1760,7 +1914,7 @@ export function ProductPage() {
 
                <div className="p-6 bg-accent/5 rounded-3xl border border-accent/10 mb-10">
                   <div className="flex justify-between items-center mb-2">
-                     <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Total Secured Deposit</span>
+                     <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Total Secure Payment</span>
                      <span className="text-xl font-display font-black text-accent">{formatGHC(deposit * quantity)}</span>
                   </div>
                   <p className="text-[8px] font-black uppercase tracking-widest text-white/20 italic">Payload includes production logistics and fabric sourcing.</p>

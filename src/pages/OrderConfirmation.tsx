@@ -30,7 +30,7 @@ import { toast } from 'react-hot-toast';
 import { initPaystackMock } from '../lib/paystackMock';
 
 const STEPS = [
-  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting deposit verify' },
+  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verify' },
   { id: 'processing', label: 'Processing', icon: Zap, description: 'In production queue' },
   { id: 'shipped', label: 'Shipped', icon: Truck, description: 'En route to HQ/Delivery' },
   { id: 'delivered', label: 'Delivered', icon: CheckCircle2, description: 'Kingdom assets received' }
@@ -105,7 +105,7 @@ export function OrderConfirmationPage() {
 
     try {
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
         amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
         currency: 'GHS',
@@ -325,13 +325,30 @@ export function OrderConfirmationPage() {
     },
   ], [order]);
 
+  const [selectedStep, setSelectedStep] = useState<string>('');
+
+  const currentStatusNormalized = useMemo(() => {
+    if (!order) return 'pending';
+    if (order.status === 'completed') return 'delivered';
+    return order.status;
+  }, [order]);
+
+  const currentStatusIdx = useMemo(() => {
+    return STEPS.findIndex(s => s.id === currentStatusNormalized);
+  }, [currentStatusNormalized]);
+
+  useEffect(() => {
+    if (order && !selectedStep) {
+      setSelectedStep(order.status === 'completed' ? 'delivered' : order.status);
+    }
+  }, [order, selectedStep]);
+
   const getStepStatus = (stepId: string) => {
     if (!order) return 'idle';
-    const statusIdx = STEPS.findIndex(s => s.id === order.status);
     const stepIdx = STEPS.findIndex(s => s.id === stepId);
     
-    if (stepIdx < statusIdx) return 'complete';
-    if (stepIdx === statusIdx) return 'active';
+    if (stepIdx < currentStatusIdx) return 'complete';
+    if (stepIdx === currentStatusIdx) return 'active';
     return 'idle';
   };
 
@@ -434,13 +451,14 @@ export function OrderConfirmationPage() {
               </div>
             </div>
             
-            <div className="flex flex-col md:grid md:grid-cols-4 gap-12 md:gap-8 relative">
+            <div className="flex flex-col md:grid md:grid-cols-4 gap-12 md:gap-8 relative select-none">
                {/* Progress Line (Desktop) */}
                <div className="hidden md:block absolute top-[28px] left-[12%] right-[12%] h-[2px] bg-white/5 z-0">
                   <motion.div 
                     initial={{ width: 0 }}
-                    animate={{ width: `${(STEPS.findIndex(s => s.id === order.status) / (STEPS.length - 1)) * 100}%` }}
+                    animate={{ width: `${(currentStatusIdx / (STEPS.length - 1)) * 100}%` }}
                     className="h-full bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)]"
+                    transition={{ duration: 0.8, ease: "easeOut" }}
                   />
                </div>
 
@@ -448,30 +466,38 @@ export function OrderConfirmationPage() {
                <div className="md:hidden absolute left-[23px] top-[10%] bottom-[10%] w-px bg-white/5 z-0">
                   <motion.div 
                     initial={{ height: 0 }}
-                    animate={{ height: `${(STEPS.findIndex(s => s.id === order.status) / (STEPS.length - 1)) * 100}%` }}
+                    animate={{ height: `${(currentStatusIdx / (STEPS.length - 1)) * 100}%` }}
                     className="w-full bg-accent shadow-[0_0_10px_rgba(242,125,38,0.5)]"
+                    transition={{ duration: 0.8, ease: "easeOut" }}
                   />
                </div>
 
                {STEPS.map((step, idx) => {
                  const status = getStepStatus(step.id);
                  const stepNumber = (idx + 1).toString().padStart(2, '0');
+                 const isSelected = selectedStep === step.id;
                  
                  return (
-                   <div key={step.id} className="flex flex-row md:flex-col items-center md:items-center text-center gap-8 md:gap-6 relative z-10">
+                   <button 
+                     key={step.id} 
+                     onClick={() => setSelectedStep(step.id)}
+                     className="flex flex-row md:flex-col items-center md:items-center text-center gap-8 md:gap-6 relative z-10 group/step text-left cursor-pointer focus:outline-none w-full"
+                   >
                       <div className="relative flex-shrink-0">
                         <div className={cn(
                           "w-12 h-12 md:w-14 md:h-14 rounded-full border-2 flex items-center justify-center transition-all duration-700 relative z-20",
                           status === 'active' ? "border-accent bg-accent text-black shadow-[0_0_30px_rgba(242,125,38,0.3)] scale-110" :
-                          status === 'complete' ? "border-accent bg-accent/20 text-accent" : "border-white/5 bg-background text-white/5"
+                          status === 'complete' ? "border-accent bg-accent/20 text-accent hover:bg-accent/30" : "border-white/5 bg-background text-white/5 hover:border-white/20",
+                          isSelected && "ring-2 ring-white/40 ring-offset-4 ring-offset-background"
                         )}>
-                          {status === 'complete' ? <CheckCircle2 className="w-6 h-6" /> : <step.icon className={cn("w-5 h-5 md:w-6 md:h-6", status === 'active' && "animate-pulse")} />}
+                          {status === 'complete' ? <CheckCircle2 className="w-6 h-6 animate-pulse" /> : <step.icon className={cn("w-5 h-5 md:w-6 md:h-6", status === 'active' && "animate-pulse")} />}
                         </div>
                         
                         {/* Step Number Background */}
                         <span className={cn(
-                          "absolute -top-4 -left-4 text-4xl font-display font-black italic opacity-5 pointer-events-none transition-colors duration-500",
-                          status !== 'idle' && "opacity-10 text-accent"
+                          "absolute -top-4 -left-4 text-4xl font-display font-black italic opacity-5 pointer-events-none transition-all duration-500",
+                          status !== 'idle' && "opacity-10 text-accent",
+                          isSelected && "opacity-20 scale-110"
                         )}>
                           {stepNumber}
                         </span>
@@ -479,14 +505,134 @@ export function OrderConfirmationPage() {
                       
                       <div className="text-left md:text-center space-y-1">
                          <p className={cn(
-                           "text-xs font-black uppercase tracking-editorial leading-none",
-                           status === 'idle' ? "text-white/20" : status === 'active' ? "text-accent" : "text-white"
+                           "text-xs font-black uppercase tracking-editorial leading-none transition-colors",
+                           status === 'idle' ? "text-white/20 group-hover/step:text-white/40" : status === 'active' ? "text-accent" : "text-white",
+                           isSelected && "text-accent underline underline-offset-4"
                          )}>{step.label}</p>
                          <p className="text-[9px] font-black uppercase tracking-tighter text-white/20 italic">{step.description}</p>
                       </div>
-                   </div>
+                   </button>
                  );
                })}
+            </div>
+
+            {/* Real-time Status Details & Logs */}
+            <div className="mt-12 pt-8 border-t border-white/5 grid grid-cols-1 lg:grid-cols-12 gap-8">
+               {/* Left Side: Step Guide */}
+               <div className="lg:col-span-7 bg-white/5 border border-white/5 rounded-2xl p-6 space-y-4">
+                 <div className="flex items-center space-x-3">
+                   <div className="p-2 bg-accent/20 text-accent rounded-lg">
+                     {(() => {
+                       const IconComp = STEPS.find(s => s.id === selectedStep)?.icon || Clock;
+                       return <IconComp className="w-5 h-5" />;
+                     })()}
+                   </div>
+                   <div>
+                     <span className="text-[9px] font-black uppercase tracking-widest text-accent">Selected Blueprint Stage</span>
+                     <h4 className="text-lg font-display font-black uppercase italic text-white flex items-center gap-2">
+                       {STEPS.find(s => s.id === selectedStep)?.label || 'System Protocol'}
+                       {selectedStep === currentStatusNormalized && (
+                         <span className="text-[8px] tracking-normal font-mono px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-normal uppercase">Current</span>
+                       )}
+                     </h4>
+                   </div>
+                 </div>
+                 
+                 <div className="text-white/60 text-xs leading-relaxed space-y-3">
+                    {selectedStep === 'pending' && (
+                      <div className="space-y-2">
+                         <p>The system is awaiting confirmation of your GHS {formatGHC(order.depositAmount || 0)} payment.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Next Action Plan:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Authorize standard Mobile Money (MoMo) transfer via Paystack or direct pay.</li>
+                           <li>Our administrators verify proof of entry to activate production.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'processing' && (
+                      <div className="space-y-2">
+                         <p>Your payment was successfully authenticated! The Kings Design Authority has initialized the production workflow.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Active Operations:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Analyzing custom blueprints and design dimensions.</li>
+                           <li>Applying precise high-fidelity digital transfers on premium raw garments.</li>
+                           <li>Conducting manual print-integrity audit.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'shipped' && (
+                      <div className="space-y-2">
+                         <p>Sovereign logistics channels are engaged. Your curated garments are cleared for transport.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Dispatch Logistics:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Package secured in protective weather-resistant sealing.</li>
+                           <li>Route calculations optimizing for rapid regional delivery.</li>
+                           <li>Check WhatsApp / SMS alerts for delivery agent coordinates.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'delivered' && (
+                      <div className="space-y-2">
+                         <p>Procurement protocol complete. Wardrobe upgrade finalized.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Post-Delivery Protocol:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Confirm physical receipt with your delivery authority.</li>
+                           <li>Earn 10% commission on referrals by sharing your unique Agent Link.</li>
+                           <li>Submit your next layout blueprint in the agent workspace.</li>
+                         </ul>
+                      </div>
+                    )}
+                 </div>
+               </div>
+
+               {/* Right Side: Telemetry Terminal Logs */}
+               <div className="lg:col-span-12 xl:col-span-5 bg-black/60 border border-white/5 rounded-2xl p-6 font-mono text-[10px] text-emerald-500/80 space-y-4">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                     <span className="font-bold tracking-widest text-[9px] uppercase text-white/40 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                        Live Status Telemetry
+                     </span>
+                     <span className="text-[8px] text-white/20">CTRL_LOG_GHA</span>
+                  </div>
+                  
+                  <div className="space-y-2 max-h-[160px] overflow-y-auto scrollbar-none">
+                     <p className="text-white/20">[{new Date(order.createdAt?.seconds * 1000 || Date.now() - 3600000).toLocaleTimeString()}] SYS_BOOT: Procurement session initialized.</p>
+                     
+                     <p className="text-white/40">[{new Date(order.createdAt?.seconds * 1000 || Date.now() - 3600000).toLocaleTimeString()}] ORDER_ID: {order.id?.slice(0, 8)} logged to Ledger.</p>
+                     
+                     {order.paymentSubmitted && (
+                       <p className="text-amber-500/80">
+                          [{order.paymentSubmittedAt ? new Date(order.paymentSubmittedAt).toLocaleTimeString() : 'ACTIVE'}] DEP_LOG: Payment transfer record uploaded. Awaiting clerk verification.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 1 && (
+                       <p className="text-emerald-500/60 font-medium">
+                          [{order.updatedAt ? new Date(order.updatedAt.seconds * 1000).toLocaleTimeString() : 'ACTIVE'}] VERIFY: Clerk confirmed deposit. Production queue prioritized.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 2 && (
+                       <p className="text-sky-500/80 font-medium">
+                          [ACTIVE] DIST_AUTH: Garments packaged. Sovereign carrier assigned.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 3 && (
+                       <p className="text-emerald-400 font-bold">
+                          [SUCCESS] HANDOVER: Package accepted by target recipient.
+                       </p>
+                     )}
+
+                     {order.status === 'cancelled' && (
+                       <p className="text-red-500 font-bold">
+                          [REVOKED] TERMINATE: Blueprint purged from active registers.
+                       </p>
+                     )}
+
+                     <div className="animate-pulse text-emerald-500/30">_ Awaiting live event broadcast...</div>
+                  </div>
+               </div>
             </div>
 
             <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -551,7 +697,7 @@ export function OrderConfirmationPage() {
                            <div>
                               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent mb-2">Automated Alert Active</p>
                               <p className="text-white/40 text-[9px] leading-relaxed font-bold uppercase tracking-tight">
-                                 A secure payment request has been signaled from <span className="text-white font-black">{PAYMENT_MOBILE_MONEY}</span> to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> deposit.
+                                 A secure payment request has been signaled from <span className="text-white font-black">{PAYMENT_MOBILE_MONEY}</span> to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> payment.
                               </p>
                            </div>
                         </div>
@@ -694,7 +840,7 @@ export function OrderConfirmationPage() {
                            className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-white transition-all flex items-center justify-center space-x-3 group/btn shadow-xl shadow-accent/20"
                          >
                            {isAlerting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4 group-hover/btn:scale-125 transition-transform" />}
-                           <span>Pay Deposit with Paystack</span>
+                           <span>Complete Payment with Paystack</span>
                          </button>
                        )}
                      </div>
@@ -760,12 +906,12 @@ export function OrderConfirmationPage() {
                    <span className="text-white print:text-black">{formatGHC(order.totalAmount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent print:text-black">
-                   <span>Deposit to Start</span>
+                   <span>{order.totalAmount === order.depositAmount ? 'Full Payment' : 'Deposit to Start'}</span>
                    <span className="font-mono text-lg print:text-black">{formatGHC(order.depositAmount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20 print:text-black/60">
-                   <span>Balance on Delivery</span>
-                   <span className="print:text-black">{formatGHC(order.totalAmount - order.depositAmount)}</span>
+                   {order.totalAmount - order.depositAmount > 0 ? <span>Balance on Delivery</span> : null}
+                   {order.totalAmount - order.depositAmount > 0 ? <span className="print:text-black">{formatGHC(order.totalAmount - order.depositAmount)}</span> : null}
                 </div>
              </div>
 

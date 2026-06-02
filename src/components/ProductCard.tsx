@@ -312,6 +312,12 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                 {product.isOnSale && (
                   <span className="ml-2 bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter animate-pulse">SALE</span>
                 )}
+                {!product.outOfStock && (product.salesCount || 0) >= 3 && (
+                  <span className="ml-2 bg-[#FF5A1F] text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter animate-pulse">LIMITED INVENTORY</span>
+                )}
+                {product.outOfStock && (
+                  <span className="ml-2 bg-red-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">OUT OF STOCK</span>
+                )}
              </div>
           </div>
 
@@ -325,13 +331,15 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
           )}
 
           <div className="absolute top-6 right-6 flex flex-col items-end gap-3 z-20">
-             <button 
-               onClick={handleQuickAdd}
-               className="w-10 h-10 rounded-full bg-accent text-black flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 duration-300"
-               title="Quick Add to Cart"
-             >
-                <Plus className="w-5 h-5 font-black" />
-             </button>
+             {!product.outOfStock && (
+               <button 
+                 onClick={handleQuickAdd}
+                 className="w-10 h-10 rounded-full bg-accent text-black flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 duration-300"
+                 title="Quick Add to Cart"
+               >
+                  <Plus className="w-5 h-5 font-black" />
+               </button>
+             )}
 
              <button 
                onClick={(e) => {
@@ -470,6 +478,12 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
             <p className="text-[7px] md:text-[9px] font-medium text-white/30 uppercase tracking-[0.3em] font-sans pt-1">
                EST. ACCRA • 2026
             </p>
+            {!product.outOfStock && (product.salesCount || 0) >= 3 && (
+              <p className="text-[7px] font-black uppercase tracking-widest text-[#FF5A1F] flex items-center gap-1 mt-1 animate-pulse">
+                <Clock className="w-2.5 h-2.5" />
+                <span>Secure blueprint: only {Math.max(1, 15 - (product.salesCount || 0))} left in registry</span>
+              </p>
+            )}
           </div>
             <div className="flex flex-col items-end">
               {gsmOptions.length > 1 && (
@@ -776,13 +790,22 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
                 {/* Final Authorization */}
                 <div className="pt-8 border-t border-white/5 flex flex-col md:flex-row gap-4">
-                  <button
-                    onClick={handleQuickAdd}
-                    className="flex-[2] py-6 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-3xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-[0_20px_50px_rgba(242,125,38,0.2)] flex items-center justify-center space-x-3"
-                  >
-                    <Plus className="w-5 h-5" />
-                    <span>Authorize Acquisition</span>
-                  </button>
+                  {product.outOfStock ? (
+                    <Link
+                      to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`}
+                      className="flex-[2] py-6 bg-red-500/10 border border-red-500/20 text-red-500 font-black uppercase text-xs tracking-[0.2em] rounded-3xl hover:bg-red-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center space-x-2"
+                    >
+                      <span>Out Of Stock - Join Notify Queue</span>
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={handleQuickAdd}
+                      className="flex-[2] py-6 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-3xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-[0_20px_50px_rgba(242,125,38,0.2)] flex items-center justify-center space-x-3"
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span>Authorize Acquisition</span>
+                    </button>
+                  )}
                   <Link
                     to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`}
                     className="flex-1 py-6 bg-white/5 text-white font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-white/10 flex items-center justify-center border border-white/5"

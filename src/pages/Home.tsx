@@ -171,12 +171,12 @@ export function HomePage() {
             </div>
             <div className="space-y-4">
               <div className="flex justify-between text-[11px] font-bold uppercase tracking-tight">
-                <span className="text-white/30 italic">Initial Deposit</span>
-                <span>50% Now</span>
+                <span className="text-white/30 italic">Payment Duty</span>
+                <span>100% Full Payment</span>
               </div>
               <div className="flex justify-between text-[11px] font-bold uppercase tracking-tight">
-                <span className="text-white/30 italic">Completion</span>
-                <span>50% on Delivery</span>
+                <span className="text-white/30 italic">Fulfilment</span>
+                <span>Secure Courier</span>
               </div>
               <div className="h-px bg-white/5 w-full"></div>
               <div className="text-[10px] text-accent font-black uppercase tracking-widest italic animate-pulse">

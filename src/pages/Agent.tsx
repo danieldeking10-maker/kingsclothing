@@ -33,7 +33,10 @@ import {
   Eye,
   EyeOff,
   Edit3,
-  Layers
+  Layers,
+  Bell,
+  X,
+  Download
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
@@ -388,6 +391,25 @@ export function AgentPortal() {
   const [totalCommission, setTotalCommission] = useState(0);
   const [referredAgents, setReferredAgents] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
+
+  // Agent notifications state & ref for monitoring real-time changes
+  const [notifications, setNotifications] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem(`agent_notifications_${user?.uid || 'guest'}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const prevPayoutsRef = useRef<any[]>([]);
+
+  // Keep notifications persistent to the logged in user
+  useEffect(() => {
+    if (user?.uid) {
+      localStorage.setItem(`agent_notifications_${user.uid}`, JSON.stringify(notifications));
+    }
+  }, [notifications, user?.uid]);
   const [allAgents, setAllAgents] = useState<any[]>([]);
   const [allDesigns, setAllDesigns] = useState<any[]>([]);
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
@@ -658,9 +680,48 @@ export function AgentPortal() {
     });
 
     // Fetch payouts
-    const qPayouts = query(collection(db, 'payouts'), where('agentId', '==', user.uid));
+    const qPayouts = isBrandOwner 
+      ? query(collection(db, 'payouts'))
+      : query(collection(db, 'payouts'), where('agentId', '==', user.uid));
     const unsubscribePayouts = onSnapshot(qPayouts, (snapshot) => {
       const p = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      p.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return timeB - timeA;
+      });
+
+      // Intercept real-time status transitions to 'Verified' or 'Disbursed'
+      if (prevPayoutsRef.current && prevPayoutsRef.current.length > 0) {
+        p.forEach((payout: any) => {
+          const oldPayout = prevPayoutsRef.current.find((old: any) => old.id === payout.id);
+          if (oldPayout && oldPayout.status !== payout.status) {
+            const statusNormal = payout.status === 'Completed' ? 'Disbursed' : payout.status;
+            if (statusNormal === 'Verified' || statusNormal === 'Disbursed') {
+              const title = `Payout ${statusNormal}`;
+              const msg = `Your payout request of ${formatGHC(payout.amount || 0)} has been updated to ${statusNormal}.`;
+              
+              // High-vis standard toast notification
+              toast.success(msg, { duration: 6000 });
+
+              // Save persistent history payload
+              setNotifications((prev: any) => [
+                {
+                  id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                  title,
+                  message: msg,
+                  status: statusNormal,
+                  amount: payout.amount || 0,
+                  read: false,
+                  time: new Date().toLocaleTimeString() + ' ' + new Date().toLocaleDateString()
+                },
+                ...prev
+              ]);
+            }
+          }
+        });
+      }
+      prevPayoutsRef.current = p;
       setPayouts(p);
     });
 
@@ -1129,7 +1190,7 @@ export function AgentPortal() {
     if (!user || totalCommission <= 0) return;
     
     // Calculate current balance
-    const totalPaid = payouts.reduce((acc, p) => acc + (p.amount || 0), 0);
+    const totalPaid = payouts.filter(p => p.agentId === user.uid).reduce((acc, p) => acc + (p.amount || 0), 0);
     const balance = totalCommission - totalPaid;
     
     if (balance < 10) {
@@ -1155,6 +1216,18 @@ export function AgentPortal() {
       toast.success('Payout request transmitted to headquarters');
     } catch (error: any) {
       toast.error('Transmission failed: ' + error.message);
+    }
+  };
+
+  const handleUpdatePayoutStatus = async (payoutId: string, newStatus: 'Pending' | 'Verified' | 'Disbursed') => {
+    try {
+      await updateDoc(doc(db, 'payouts', payoutId), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Payout successfully marked as ${newStatus}`);
+    } catch (error: any) {
+      toast.error(`Failed to update payout: ${error.message}`);
     }
   };
 
@@ -1647,14 +1720,117 @@ export function AgentPortal() {
               )}
             </div>
             
-            <div className="flex items-center space-x-6 bg-white/5 p-6 rounded-[2.5rem] border border-white/10 group hover:border-accent/40 transition-all duration-500">
-               <div className="text-right">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-1">Session Active</p>
-                  <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{user.displayName || 'Anonymous Agent'}</p>
-               </div>
-               <div className="w-16 h-16 rounded-[1.5rem] bg-accent flex items-center justify-center font-black text-2xl text-black shadow-xl shadow-accent/20 rotate-3 group-hover:rotate-0 transition-transform">
-                  {user.displayName?.charAt(0) || 'K'}
-               </div>
+            <div className="flex items-center gap-4">
+              {/* Notification Center Trigger and Popover */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                  className="w-16 h-16 rounded-[1.5rem] bg-white/5 border border-white/10 flex items-center justify-center text-white hover:text-accent hover:border-accent/40 transition-all shadow-xl group/bell active:scale-[0.98]"
+                >
+                  <div className="relative">
+                    <Bell className="w-6 h-6 group-hover/bell:animate-bounce" />
+                    {notifications.some(n => !n.read) && (
+                      <span className="absolute -top-2 -right-2 bg-accent text-black font-black text-[9px] px-2 py-0.5 rounded-full animate-pulse border border-background">
+                        {notifications.filter(n => !n.read).length}
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                {/* Dropdown Menu / Popover Panel */}
+                <AnimatePresence>
+                  {isNotificationOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 15, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 15, scale: 0.95 }}
+                      className="absolute right-0 mt-4 w-96 bg-[#0B0B0C] border-2 border-white/5 rounded-[2rem] p-6 shadow-2xl z-50 overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                        <div className="flex items-center space-x-2">
+                          <Bell className="w-4 h-4 text-accent" />
+                          <span className="text-xs font-black uppercase tracking-[0.2em] text-white">System Feed</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {notifications.length > 0 && (
+                            <button
+                              onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                              className="text-[9px] font-black uppercase tracking-widest text-accent hover:underline"
+                            >
+                              Mark all read
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setIsNotificationOpen(false)}
+                            className="text-white/40 hover:text-white transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-80 overflow-y-auto space-y-3 pr-1">
+                        {notifications.length === 0 ? (
+                          <div className="py-12 text-center text-white/20 text-[9px] font-black uppercase tracking-[0.2em] italic">
+                            No notifications in history
+                          </div>
+                        ) : (
+                          notifications.map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => {
+                                // Mark single as read
+                                setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                              }}
+                              className={cn(
+                                "p-4 rounded-2xl border transition-all text-left relative overflow-hidden cursor-pointer",
+                                notif.read ? "bg-white/[0.01] border-white/5 opacity-50" : "bg-white/5 border-accent/25 hover:border-accent"
+                              )}
+                            >
+                              <div className="flex justify-between items-start mb-1">
+                                <span className={cn(
+                                  "text-[9px] font-black uppercase tracking-[0.15em] px-2 py-0.5 rounded-md",
+                                  notif.status === 'Verified' ? "bg-green-500/15 text-green-400 border border-green-500/20" : "bg-accent/15 text-accent border border-accent/20"
+                                )}>
+                                  {notif.status}
+                                </span>
+                                <span className="text-[8px] font-mono text-white/30">{notif.time.split(' ')[0]}</span>
+                              </div>
+                              <p className="text-[11px] font-bold text-white leading-tight mb-1">{notif.title}</p>
+                              <p className="text-[10px] text-white/40 leading-relaxed font-black uppercase tracking-tight italic">{notif.message}</p>
+                              {!notif.read && (
+                                <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-accent rounded-full animate-ping" />
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {notifications.length > 0 && (
+                        <div className="pt-4 border-t border-white/5 mt-4 flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-white/20">
+                          <span>Total Logs: {notifications.length}</span>
+                          <button
+                            onClick={() => setNotifications([])}
+                            className="hover:text-red-400 transition-colors uppercase"
+                          >
+                            Purge History
+                          </button>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex items-center space-x-6 bg-white/5 p-6 rounded-[2.5rem] border border-white/10 group hover:border-accent/40 transition-all duration-500">
+                 <div className="text-right">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-1">Session Active</p>
+                    <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{user.displayName || 'Anonymous Agent'}</p>
+                 </div>
+                 <div className="w-16 h-16 rounded-[1.5rem] bg-accent flex items-center justify-center font-black text-2xl text-black shadow-xl shadow-accent/20 rotate-3 group-hover:rotate-0 transition-transform">
+                    {user.displayName?.charAt(0) || 'K'}
+                 </div>
+              </div>
             </div>
           </div>
         </header>
@@ -3544,6 +3720,172 @@ export function AgentPortal() {
                </div>
             </section>
 
+            {/* Royal Distribution Ledger (Commission Payouts Table) */}
+            <section className="space-y-10">
+               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-6">
+                  <div className="space-y-1">
+                     <div className="flex items-center space-x-3">
+                        <div className="bg-accent/15 p-2 rounded-xl">
+                           <Wallet className="w-5 h-5 text-accent" />
+                        </div>
+                        <h3 className="text-xl font-display font-black uppercase tracking-editorial italic text-accent">Royal Distribution Ledger<span className="text-white">_</span></h3>
+                     </div>
+                     <p className="text-[10px] font-black uppercase tracking-widest text-white/30 italic">Real-time commission disbursements and verified node earnings</p>
+                  </div>
+                  
+                  {/* Financial Stats Summary Row */}
+                  <div className="flex gap-4">
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Pending Ledger</p>
+                        <p className="text-base font-mono font-black text-yellow-500">
+                           {formatGHC(payouts.filter(p => p.status === 'Requested' || p.status === 'Pending').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Verified Gate</p>
+                        <p className="text-base font-mono font-black text-blue-400">
+                           {formatGHC(payouts.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Disbursed Node</p>
+                        <p className="text-base font-mono font-black text-green-400">
+                           {formatGHC(payouts.filter(p => p.status === 'Disbursed' || p.status === 'Completed').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                  </div>
+               </div>
+
+               <div className="bg-[#0F0F10] rounded-[3.5rem] border-4 border-white/10 overflow-hidden shadow-2xl">
+                  <div className="overflow-x-auto">
+                     <table className="w-full text-left min-w-[900px]">
+                        <thead>
+                           <tr className="border-b border-white/10 bg-white/5">
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Payout Registry Node</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Disbursement Channel</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Amount Requested</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Temporal Stamp</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Operational Status</th>
+                              {isBrandOwner && (
+                                 <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40 text-right">Ledger Calibration</th>
+                              )}
+                           </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                           {payouts.length === 0 ? (
+                              <tr>
+                                 <td colSpan={isBrandOwner ? 6 : 5} className="px-10 py-24 text-center">
+                                    <div className="max-w-sm mx-auto space-y-4">
+                                       <CreditCard className="w-12 h-12 text-white/5 mx-auto animate-pulse" strokeWidth={1} />
+                                       <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/20 italic">No distribution payloads detected in the current channel.</p>
+                                    </div>
+                                 </td>
+                              </tr>
+                           ) : (
+                              payouts.map((p) => {
+                                 // Determine mapped labels & statuses
+                                 const status = p.status || 'Pending';
+                                 
+                                 let badgeStyle = "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20";
+                                 let displayStatus = 'Pending';
+                                 if (status === 'Verified') {
+                                    badgeStyle = "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+                                    displayStatus = 'Verified';
+                                 } else if (status === 'Disbursed' || status === 'Completed') {
+                                    badgeStyle = "bg-green-500/10 text-green-400 border border-green-500/20";
+                                    displayStatus = 'Disbursed';
+                                 }
+
+                                 return (
+                                    <tr key={p.id} className="hover:bg-white/[0.03] transition-colors group">
+                                       <td className="px-10 py-7">
+                                          <div className="flex items-center space-x-4">
+                                             <div className="w-10 h-10 rounded-xl bg-black/60 border border-white/10 flex items-center justify-center text-[11px] font-bold text-accent font-mono">
+                                                ★
+                                             </div>
+                                             <div>
+                                                <p className="text-sm font-black text-white italic group-hover:text-accent transition-colors leading-none mb-1.5">
+                                                   {p.agentName || 'Vanguard Agent'}
+                                                </p>
+                                                <div className="flex items-center gap-1.5 text-[8px] font-black text-white/20 tracking-widest uppercase">
+                                                   <span>REF: {p.id.slice(0, 10).toUpperCase()}</span>
+                                                </div>
+                                             </div>
+                                          </div>
+                                       </td>
+                                       <td className="px-10 py-7">
+                                          <div className="flex flex-col gap-1">
+                                             <p className="text-sm font-bold text-white font-mono tracking-wider">{p.momoNumber || 'N/A'}</p>
+                                             <span className={cn(
+                                                "text-[7px] font-black uppercase tracking-widest leading-none px-2 py-0.5 rounded border w-fit font-sans",
+                                                p.momoProvider === 'mtn' ? "bg-[#FFCC00]/10 text-[#FFCC00] border-[#FFCC00]/20" :
+                                                p.momoProvider === 'telecel' ? "bg-[#E60000]/10 text-[#E60000] border-[#E60000]/20" :
+                                                "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                             )}>
+                                                {p.momoProvider?.toUpperCase() || 'MTN'}
+                                             </span>
+                                          </div>
+                                       </td>
+                                       <td className="px-10 py-7 font-mono font-black text-accent text-base">
+                                          {formatGHC(p.amount || 0)}
+                                       </td>
+                                       <td className="px-10 py-7 text-[10px] font-bold text-white/40 whitespace-nowrap">
+                                          {p.createdAt ? (
+                                             p.createdAt.seconds 
+                                                ? new Date(p.createdAt.seconds * 1000).toLocaleString() 
+                                                : new Date(p.createdAt).toLocaleString()
+                                          ) : (
+                                             <span className="italic flex items-center gap-1.5">
+                                                <Clock className="w-3 h-3 text-yellow-500 animate-spin-slow" /> Awaiting clock sync
+                                             </span>
+                                          )}
+                                       </td>
+                                       <td className="px-10 py-7">
+                                          <span className={cn(
+                                             "px-4 py-2 rounded-full text-[8.5px] font-black uppercase tracking-[0.2em] inline-flex items-center gap-1.5",
+                                             badgeStyle
+                                          )}>
+                                             <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                                             {displayStatus}
+                                          </span>
+                                       </td>
+                                       {isBrandOwner && (
+                                          <td className="px-10 py-7 text-right">
+                                             <div className="flex justify-end gap-3.5">
+                                                {(status === 'Requested' || status === 'Pending') && (
+                                                   <button
+                                                      onClick={() => handleUpdatePayoutStatus(p.id, 'Verified')}
+                                                      className="bg-blue-600/30 hover:bg-blue-600 hover:text-white text-blue-400 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 border border-blue-500/20"
+                                                   >
+                                                      Verify
+                                                   </button>
+                                                )}
+                                                {(status === 'Requested' || status === 'Pending' || status === 'Verified') && (
+                                                   <button
+                                                      onClick={() => handleUpdatePayoutStatus(p.id, 'Disbursed')}
+                                                      className="bg-green-600 hover:bg-white hover:text-black text-white px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-[0_10px_20px_rgba(34,197,94,0.2)]"
+                                                   >
+                                                      Disburse
+                                                   </button>
+                                                )}
+                                                {(status === 'Disbursed' || status === 'Completed') && (
+                                                   <span className="text-[9px] font-black text-white/20 uppercase tracking-widest italic flex items-center gap-1.5">
+                                                      <ShieldCheck className="w-4 h-4 text-green-500" /> Settled
+                                                   </span>
+                                                )}
+                                             </div>
+                                          </td>
+                                       )}
+                                    </tr>
+                                 );
+                              })
+                           )}
+                        </tbody>
+                     </table>
+                  </div>
+               </div>
+            </section>
+
             {/* Network Intelligence Ledger */}
             <section className="space-y-12 pt-16">
                <div className="flex justify-between items-end px-8">
@@ -3874,7 +4216,7 @@ export function AgentPortal() {
                         </div>
                         <h3 className="text-xl font-display font-black uppercase italic tracking-tighter text-white">Payout History<span className="text-accent">_</span></h3>
                      </div>
-                     <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{payouts.length} Logs</span>
+                     <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{payouts.filter(p => p.agentId === user.uid).length} Logs</span>
                   </div>
 
                   {/* Withdrawal Authority Console */}
@@ -3884,13 +4226,13 @@ export function AgentPortal() {
                         <div className="space-y-2 text-center md:text-left">
                            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/20 italic">Liquid Royalty Reserve</p>
                            <h4 className="text-6xl font-display font-black text-white tracking-tighter leading-none animate-pulse-slow">
-                              {formatGHC(totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0))}
+                              {formatGHC(totalCommission - payouts.filter(p => p.agentId === user.uid).reduce((acc, p: any) => acc + (p.amount || 0), 0))}
                            </h4>
                            <p className="text-[9px] font-black uppercase text-accent tracking-widest mt-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg w-fit mx-auto md:ml-0">{agentProfile?.momoNumber || 'IDENTITY REQUIRED'}</p>
                         </div>
                         <button 
                            onClick={handleRequestPayout}
-                           disabled={totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0) < 10}
+                           disabled={totalCommission - payouts.filter(p => p.agentId === user.uid).reduce((acc, p: any) => acc + (p.amount || 0), 0) < 10}
                            className="bg-accent text-black px-12 py-7 rounded-[2rem] font-black uppercase tracking-editorial text-[12px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_40px_rgba(242,125,38,0.3)] group-hover/payout:shadow-[0_30px_60px_rgba(242,125,38,0.4)] disabled:opacity-20 disabled:grayscale flex items-center gap-4"
                         >
                            <Zap className="w-5 h-5 fill-current" />
@@ -3900,16 +4242,17 @@ export function AgentPortal() {
                   </div>
 
                   <div className="space-y-5">
-                     {payouts.length > 0 ? (
-                        payouts.slice(0, 4).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((payout) => (
+                     {payouts.filter(p => p.agentId === user.uid).length > 0 ? (
+                        payouts.filter(p => p.agentId === user.uid).slice(0, 4).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((payout) => (
                            <div key={payout.id} className="p-6 bg-white/2 rounded-3xl border border-white/5 group hover:border-accent/30 transition-all hover:bg-white/5">
                               <div className="flex items-start justify-between mb-4">
                                  <p className="text-xl font-mono font-black text-white leading-none italic">{formatGHC(payout.amount)}</p>
                                  <span className={cn(
                                     "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em]",
-                                    payout.status === 'Completed' ? "bg-green-500/20 text-green-500" : "bg-accent/20 text-accent"
+                                    (payout.status === 'Completed' || payout.status === 'Disbursed') ? "bg-green-500/20 text-green-500" :
+                                    payout.status === 'Verified' ? "bg-blue-500/20 text-blue-400" : "bg-accent/20 text-accent"
                                  )}>
-                                    {payout.status}
+                                    {payout.status === 'Requested' ? 'Pending' : payout.status}
                                  </span>
                               </div>
                               <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-white/20 italic">

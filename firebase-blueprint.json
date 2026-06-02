@@ -36,6 +36,7 @@
         "status": { "type": "string", "enum": ["pending", "approved", "archived"] },
         "agentId": { "type": ["string", "null"] },
         "salesCount": { "type": "number" },
+        "outOfStock": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       }
     },
@@ -103,6 +104,19 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "message", "type", "createdAt"]
+    },
+    "RestockSubscription": {
+      "title": "RestockSubscription",
+      "description": "User subscription for out-of-stock item restocking.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "notified": { "type": "boolean" }
+      },
+      "required": ["productId", "productName", "email", "createdAt", "notified"]
     }
   },
   "firestore": {
@@ -129,6 +143,10 @@
     "/notifications/{notificationId}": {
       "schema": "Notification",
       "description": "Broadcast notifications sent to customers."
+    },
+    "/restock_subscriptions/{subscriptionId}": {
+      "schema": "RestockSubscription",
+      "description": "Subscriptions for when custom designs are restocked."
     },
     "/system_logs/{logId}": {
       "schema": { "type": "object", "properties": {} },

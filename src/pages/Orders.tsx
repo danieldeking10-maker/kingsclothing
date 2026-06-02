@@ -33,7 +33,7 @@ import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 
 const STEPS = [
-  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting deposit verification' },
+  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verification' },
   { id: 'processing', label: 'Processing', icon: Zap, description: 'In manufacture & production queue' },
   { id: 'shipped', label: 'Shipped', icon: Truck, description: 'En route to HQ/local dispatch' },
   { id: 'delivered', label: 'Delivered', icon: CheckCircle2, description: 'Kingdom assets received & completed' }
@@ -496,13 +496,13 @@ export function OrdersPage() {
                         <span className="text-white font-mono">{formatGHC(trackedOrder.totalAmount)}</span>
                       </div>
                       <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent">
-                        <span>Deposit Completed</span>
+                        <span>{trackedOrder.totalAmount === trackedOrder.depositAmount ? 'Full Payment Completed' : 'Deposit Completed'}</span>
                         <span className="font-mono text-base">{formatGHC(trackedOrder.depositAmount)}</span>
                       </div>
                       <div className="h-px bg-white/5 w-full" />
                       <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/30">
-                        <span>Payable on Dropoff</span>
-                        <span className="text-white font-mono text-sm">{formatGHC(trackedOrder.totalAmount - trackedOrder.depositAmount)}</span>
+                        {trackedOrder.totalAmount - trackedOrder.depositAmount > 0 ? <span>Payable on Dropoff</span> : null}
+                        {trackedOrder.totalAmount - trackedOrder.depositAmount > 0 ? <span className="text-white font-mono text-sm">{formatGHC(trackedOrder.totalAmount - trackedOrder.depositAmount)}</span> : null}
                       </div>
                     </div>
 
