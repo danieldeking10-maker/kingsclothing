@@ -642,6 +642,104 @@ export function OrdersPage() {
                         </div>
 
                       </div>
+
+                      {/* Interactive Telemetry & Route Tracker Visualization */}
+                      <div className="mt-6 pt-5 border-t border-white/5 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left">
+                          <div className="flex items-center space-x-2">
+                            <Package className="w-3.5 h-3.5 text-accent animate-pulse" />
+                            <span className="text-[8px] font-black uppercase tracking-[0.2em] text-white/40">Real-Time Logistics Telemetry Protocol</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[7.5px] font-black uppercase tracking-widest text-white/30">CURRENT STATE:</span>
+                            <span className={cn(
+                              "text-[8px] font-mono font-black uppercase tracking-widest px-2.5 py-1 rounded bg-white/5 border",
+                              order.status === 'delivered' ? "text-green-400 border-green-500/20 bg-green-500/5" :
+                              order.status === 'cancelled' ? "text-red-400 border-red-500/20 bg-red-500/5" :
+                              "text-accent border-accent/20 bg-accent/5 animate-pulse"
+                            )}>
+                              {order.status || 'pending'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {order.status === 'cancelled' ? (
+                          <div className="py-4 px-5 bg-red-500/5 border border-red-500/10 rounded-2xl flex items-center space-x-3">
+                            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                            <p className="text-[8.5px] font-black uppercase tracking-widest text-red-500/70">
+                              TRANSACTION SUSPENDED & INVENTORY RETURNED TO MAIN REGISTRY.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="relative py-2 px-1">
+                            {/* Baseline bar */}
+                            <div className="absolute left-[8%] right-[8%] top-[25px] h-[3px] bg-white/5 rounded-full z-0" />
+                            
+                            {/* Animated telemetry progress fill bar */}
+                            <div 
+                              className="absolute left-[8%] top-[25px] h-[3px] bg-accent transition-all duration-1000 ease-out shadow-[0_0_12px_rgba(242,125,38,0.4)] rounded-full z-0" 
+                              style={{ 
+                                width: order.status === 'pending' ? '0%' :
+                                       order.status === 'processing' ? '42%' :
+                                       order.status === 'shipped' ? '84%' : '84%' 
+                              }} 
+                            />
+
+                            {/* Node markers */}
+                            <div className="relative flex justify-between z-10">
+                              
+                              {/* PROCESSING STEP */}
+                              <div className="flex flex-col items-center">
+                                <div className={cn(
+                                  "w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-700",
+                                  (order.status !== 'pending' && order.status !== 'cancelled')
+                                    ? "bg-accent border-accent text-black scale-105 shadow-[0_0_12px_rgba(242,125,38,0.3)]"
+                                    : "bg-background border-white/5 text-white/20"
+                                )}>
+                                  <Zap className="w-3.5 h-3.5" />
+                                </div>
+                                <span className={cn(
+                                  "text-[7px] font-black uppercase tracking-widest mt-2 transition-colors",
+                                  (order.status !== 'pending' && order.status !== 'cancelled') ? "text-accent" : "text-white/20"
+                                )}>Processing</span>
+                              </div>
+
+                              {/* SHIPPED STEP */}
+                              <div className="flex flex-col items-center">
+                                <div className={cn(
+                                  "w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-700",
+                                  (order.status === 'shipped' || order.status === 'delivered' || order.status === 'completed')
+                                    ? "bg-accent border-accent text-black scale-105 shadow-[0_0_12px_rgba(242,125,38,0.3)]"
+                                    : "bg-background border-white/5 text-white/20"
+                                )}>
+                                  <Truck className="w-3.5 h-3.5" />
+                                </div>
+                                <span className={cn(
+                                  "text-[7px] font-black uppercase tracking-widest mt-2 transition-colors",
+                                  (order.status === 'shipped' || order.status === 'delivered' || order.status === 'completed') ? "text-accent" : "text-white/20"
+                                )}>Shipped</span>
+                              </div>
+
+                              {/* DELIVERED STEP */}
+                              <div className="flex flex-col items-center flex-shrink-0">
+                                <div className={cn(
+                                  "w-9 h-9 rounded-full flex items-center justify-center border-2 transition-all duration-700",
+                                  (order.status === 'delivered' || order.status === 'completed')
+                                    ? "bg-accent border-accent text-black scale-105 shadow-[0_0_12px_rgba(242,125,38,0.3)]"
+                                    : "bg-background border-white/5 text-white/20"
+                                )}>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                </div>
+                                <span className={cn(
+                                  "text-[7px] font-black uppercase tracking-widest mt-2 transition-colors",
+                                  (order.status === 'delivered' || order.status === 'completed') ? "text-accent" : "text-white/20"
+                                )}>Delivered</span>
+                              </div>
+
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 ))}

@@ -117,6 +117,17 @@
         "notified": { "type": "boolean" }
       },
       "required": ["productId", "productName", "email", "createdAt", "notified"]
+    },
+    "NewsletterSubscription": {
+      "title": "NewsletterSubscription",
+      "description": "User subscription for general newsletter and brand drops.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["email", "createdAt", "active"]
     }
   },
   "firestore": {
@@ -147,6 +158,10 @@
     "/restock_subscriptions/{subscriptionId}": {
       "schema": "RestockSubscription",
       "description": "Subscriptions for when custom designs are restocked."
+    },
+    "/newsletter_subscriptions/{subscriptionId}": {
+      "schema": "NewsletterSubscription",
+      "description": "User subscription for newsletters."
     },
     "/system_logs/{logId}": {
       "schema": { "type": "object", "properties": {} },

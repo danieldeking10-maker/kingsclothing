@@ -148,8 +148,22 @@ export function VeoVideoGenerator({ product, startingImage, onVideoGenerated }: 
 
     } catch (error: any) {
       console.error('Veo Error:', error);
-      toast.error(error.message || 'Failed to generate video');
-      setStatusMessage('Forging Failed: ' + (error.message || 'Internal Error'));
+      let errorMsg = error.message || 'Failed to generate video';
+      
+      const isPermissionDenied = 
+        errorMsg.includes('PERMISSION_DENIED') || 
+        errorMsg.includes('does not have permission') ||
+        errorMsg.includes('403') ||
+        JSON.stringify(error).includes('PERMISSION_DENIED') ||
+        JSON.stringify(error).includes('403') ||
+        JSON.stringify(error).includes('permission');
+
+      if (isPermissionDenied) {
+        errorMsg = 'Veo model access is restricted. Verify your API key has Google Veo model access enabled (requires a Google Cloud project with Veo API permissions).';
+      }
+
+      toast.error(errorMsg);
+      setStatusMessage('Forging Failed: ' + errorMsg);
     } finally {
       setIsGenerating(false);
     }

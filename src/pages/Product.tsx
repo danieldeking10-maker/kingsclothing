@@ -44,6 +44,7 @@ import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
 import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
 import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
 
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
@@ -641,6 +642,25 @@ export function ProductPage() {
     const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
     const handlePaymentSuccess = async (response: any) => {
+      toast.dismiss(loadingToast);
+      
+      // Audit and validate response to stop false-positive payments
+      const audit = await logPaystackCallback(
+        'Product BuyNow',
+        {
+          reference: genRef,
+          amount: deposit * quantity,
+          email: user?.email || 'customer@kingsclothing.brand'
+        },
+        response
+      );
+
+      if (!audit.isValid) {
+        toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+        setIsOrdering(false);
+        return;
+      }
+
       const orderData = {
         customerId: user?.uid,
         customerName: user?.displayName,
@@ -748,6 +768,7 @@ export function ProductPage() {
       initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
+      toast.dismiss(loadingToast);
       
     } catch (error: any) {
       toast.dismiss(loadingToast);

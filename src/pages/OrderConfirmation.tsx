@@ -28,6 +28,7 @@ import { formatGHC, cn } from '@/src/lib/utils';
 import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
 import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
 
 const STEPS = [
   { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verify' },
@@ -82,6 +83,24 @@ export function OrderConfirmationPage() {
 
     const handlePaymentSuccess = async (response: any) => {
       toast.dismiss(loadingToast);
+      
+      // Audit and validate response to stop false-positive payments
+      const audit = await logPaystackCallback(
+        'OrderConfirmation PayNow',
+        {
+          reference: order?.id || 'MANUAL_REF_CRF',
+          amount: order?.depositAmount || 0,
+          email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand'
+        },
+        response
+      );
+
+      if (!audit.isValid) {
+        toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+        setIsAlerting(false);
+        return;
+      }
+
       toast.success('Payment Received Successfully');
       setIsAlerting(false);
       if (id) {
@@ -121,6 +140,7 @@ export function OrderConfirmationPage() {
       initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
+      toast.dismiss(loadingToast);
     } catch (error: any) {
       toast.dismiss(loadingToast);
       toast.error('Terminal Error: ' + error.message);

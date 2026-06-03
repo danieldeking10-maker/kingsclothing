@@ -10,7 +10,8 @@ import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
 import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
-import { collection, query, where, getDocs, limit, orderBy, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, limit, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { PWAInstallModal } from './PWAInstallModal';
 
@@ -1018,6 +1019,46 @@ export function Footer() {
 
   const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [email, setEmail] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubscribe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      toast.error('EMAIL REQUIRED');
+      return;
+    }
+    
+    // basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      toast.error('INVALID EMAIL ADDRESS');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const subscriptionId = 'sub_' + Math.random().toString(36).substring(2, 15);
+    const path = `newsletter_subscriptions/${subscriptionId}`;
+
+    try {
+      await setDoc(doc(db, 'newsletter_subscriptions', subscriptionId), {
+        email: email.trim().toLowerCase(),
+        createdAt: serverTimestamp(),
+        active: true
+      });
+      toast.success('CITIZENSHIP GRANTED - SUBSCRIBED');
+      setEmail('');
+    } catch (error) {
+      console.error('Subscription error:', error);
+      try {
+        handleFirestoreError(error, OperationType.CREATE, path);
+      } catch (innerErr) {
+        toast.error('SUBSCRIPTION FAILED. PLEASE TRY AGAIN.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <footer className="bg-background border-t border-white/10 py-16 px-4 relative">
@@ -1079,16 +1120,27 @@ export function Footer() {
           <p className="text-white/40 text-[9px] mb-6 font-black leading-relaxed uppercase tracking-widest italic leading-relaxed">
             Join the inner circle for early blueprint access and exclusive drops.
           </p>
-          <div className="relative group">
+          <form onSubmit={handleSubscribe} className="relative group">
             <input 
               type="email" 
               placeholder="ENTER EMAIL"
-              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent transition-all"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent transition-all disabled:opacity-50"
             />
-            <button className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent text-black rounded-xl hover:scale-110 active:scale-95 transition-all">
-              <ArrowRight className="w-4 h-4" />
+            <button 
+              type="submit"
+              disabled={isSubmitting}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent text-black rounded-xl hover:scale-110 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center min-w-[32px] min-h-[32px]"
+            >
+              {isSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowRight className="w-4 h-4" />
+              )}
             </button>
-          </div>
+          </form>
           <div className="flex items-center space-x-6 mt-10">
             {[
               { name: 'Instagram', icon: Search },

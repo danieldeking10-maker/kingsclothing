@@ -10,6 +10,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -120,6 +121,25 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
       const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'CartDrawer Checkout',
+          {
+            reference: genRef,
+            amount: depositAmount,
+            email: user?.email || guestEmail || 'customer@kingsclothing.brand'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+          setIsOrdering(false);
+          return;
+        }
+
         const orderData = {
           customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
           customerName: user?.displayName || guestName || 'Guest Customer',
@@ -244,6 +264,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       initPaystackMock();
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
+      toast.dismiss(loadingToast);
 
     } catch (error: any) {
       toast.dismiss(loadingToast);
