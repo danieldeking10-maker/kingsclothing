@@ -12,8 +12,9 @@ service cloud.firestore {
     function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
     function isAdmin() { 
       return isSignedIn() && (
-        request.auth.token.email in ["kingsclothingbrand7@gmail.com", "danieldeking10@gmail.com"] ||
-        (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.role == "admin")
+        (request.auth.token.email != null && request.auth.token.email.lower() in ["kingsclothingbrand7@gmail.com", "danieldeking10@gmail.com"]) ||
+        (exists(/databases/$(database)/documents/agents/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.get('role', 'agent') == "admin")
       );
     }
     function incoming() { return request.resource.data; }
@@ -24,20 +25,19 @@ service cloud.firestore {
     // --- Validation Blueprints ---
 
     function isValidAgent(data) {
-      return (data.uid == request.auth.uid || isAdmin())
-        && data.email is string && data.email.size() <= 200
-        && data.role in ["user", "agent", "admin"]
+      return (data.get('uid', '') == request.auth.uid || isAdmin())
+        && data.get('email', '') is string && data.get('email', '').size() <= 200
+        && data.get('role', 'agent') in ["user", "agent", "admin"]
         && (data.get('name', '') is string && data.get('name', '').size() <= 100)
         && (data.get('referredBy', null) == null || data.get('referredBy', null) is string)
         && (data.keys().hasAll(['uid', 'email', 'role', 'createdAt']));
     }
 
     function isValidProduct(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() <= 100
-        && data.category is string && data.category.size() <= 100
-        && data.basePrice is number && data.basePrice >= 0
-        && (data.status == "pending" || isAdmin()) // Only admin can approve
-        && (data.get('agentId', null) == null || data.get('agentId', null) == request.auth.uid || isAdmin());
+      return data.get('name', '') is string && data.get('name', '').size() > 0 && data.get('name', '').size() <= 100
+        && data.get('category', '') is string && data.get('category', '').size() <= 100
+        && data.get('basePrice', 0) is number && data.get('basePrice', 0) >= 0
+        && (data.get('status', 'pending') == "pending" || isAdmin());
     }
 
     function isValidOrder(data) {
@@ -113,14 +113,16 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow get: if true;
-      allow list: if resource.data.status == "approved" || resource.data.agentId == request.auth.uid || isAdmin();
+      allow list: if resource.data.get('status', '') == "approved" || resource.data.get('agentId', '') == request.auth.uid || isAdmin();
 
       match /reviews/{reviewId} {
         allow read: if true;
         allow create: if isVerifiedUser() && isValidId(reviewId) && isValidReview(incoming());
-        allow delete: if isAdmin() || isOwner(existing().userId);
+        allow delete: if isAdmin() || isOwner(existing().get('userId', ''));
       }
-      allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming()) && incoming().createdAt == request.time;
+      allow create: if isVerifiedUser() && isValidId(productId) && isValidProduct(incoming())
+        && (incoming().get('agentId', null) == null || incoming().get('agentId', null) == request.auth.uid || isAdmin())
+        && (incoming().get('createdAt', null) == request.time || incoming().get('createdAt', null) is timestamp);
       allow update: if (
           (incoming().diff(existing()).affectedKeys().hasOnly(['salesCount']) && incoming().salesCount is number) || // Enabled for guest/all checkout increments
           (isVerifiedUser() && (
@@ -129,16 +131,16 @@ service cloud.firestore {
               'updatedAt', 'allowedColors', 'colorStudioImages', 'colorBlueprints', 
               'colorImages', 'name', 'description', 'basePrice', 'gsmPrices', 'gsmOptions', 'salesCount', 'aiTags', 'outOfStock'
             ])) ||
-            (isOwner(existing().agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['outOfStock', 'updatedAt'])) ||
-            (isOwner(existing().agentId) && existing().status == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
-          ) && isValidProduct(incoming()) && incoming().createdAt == existing().createdAt)
+            (isOwner(existing().get('agentId', '')) && incoming().diff(existing()).affectedKeys().hasOnly(['outOfStock', 'updatedAt'])) ||
+            (isOwner(existing().get('agentId', '')) && existing().get('status', 'pending') == "pending" && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'basePrice', 'allowedColors']))
+          ) && isValidProduct(incoming()) && (incoming().get('createdAt', null) == existing().get('createdAt', null) || incoming().get('createdAt', null) is timestamp))
         );
-      allow delete: if isAdmin() || isOwner(existing().agentId);
+      allow delete: if isAdmin() || isOwner(existing().get('agentId', ''));
     }
 
     match /orders/{orderId} {
       allow get: if true; // Securely allow direct tracking lookup via cryptographic Order ID
-      allow list: if (resource.data.customerId == null || resource.data.customerId == request.auth.uid || resource.data.customerId.matches('^guest_') || isAdmin());
+      allow list: if (resource.data.customerId == null || resource.data.customerId == request.auth.uid || resource.data.customerId.matches('^guest_') || resource.data.get('referralAgentId', null) == request.auth.uid || isAdmin());
       allow create: if isValidId(orderId) && isValidOrder(incoming()) && incoming().createdAt == request.time;
       allow update: if (isOwner(existing().customerId) || (existing().customerId != null && existing().customerId.matches('^guest_')) || isAdmin())
         && isValidOrder(incoming())

@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize environment variables
 dotenv.config();
@@ -43,6 +44,276 @@ async function startServer() {
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Lazy Initialization helper for GoogleGenAI
+  const getGeminiClient = () => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY environment variable is not configured on the server");
+    }
+    return new GoogleGenAI({ apiKey });
+  };
+
+  // 1. Generate Product Tags Endpoint
+  app.post("/api/gemini/generate-tags", async (req, res) => {
+    try {
+      const { name, category, description } = req.body;
+      if (!name || !category) {
+        return res.status(400).json({ error: "Missing required parameters name or category." });
+      }
+
+      const ai = getGeminiClient();
+      const prompt = `Generate exactly 3 short, premium fashion tags for a product.
+      Name: "${name}"
+      Category: "${category}"
+      Description: "${description || ''}"
+
+      Each tag should be 1-2 words maximum. Focus on style, vibe, or material.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          systemInstruction: "You are a premium streetwear brand consultant. You generate short, high-impact fashion tags that evoke luxury, urban culture, and artisanal quality.",
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            required: ["tags"],
+            properties: {
+              tags: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: "3 highly curated fashion tags"
+              }
+            }
+          }
+        }
+      });
+
+      const data = JSON.parse(response.text || '{}');
+      res.json(data);
+    } catch (error: any) {
+      console.error("[Backend Gemini/generate-tags Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to generate tags" });
+    }
+  });
+
+  // 2. Enhance Product Description Endpoint
+  app.post("/api/gemini/enhance-description", async (req, res) => {
+    try {
+      const { product, selectedColor, selectedSize, selectedGsm } = req.body;
+      if (!product || !selectedColor || !selectedSize || !selectedGsm) {
+        return res.status(400).json({ error: "Missing parameters for description enhancement." });
+      }
+
+      const ai = getGeminiClient();
+      const prompt = `
+        You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
+        Your mission is to forge a unique, commanding product narrative for "${product.name}".
+        
+        Product Details:
+        - Category: ${product.category}
+        - Fabric Shade: ${selectedColor.name || selectedColor}
+        - Structural Sizing: ${selectedSize}
+        - Fabric Weight: ${selectedGsm} GSM
+        - Base Blueprint: ${product.description}
+        
+        Brand Guidelines:
+        - Theme: "Ghanaian Craftsmanship" (soul of Accra, precision of heritage) meets "Streetwear Authority" (unapologetic leadership).
+        - Vocabulary: Architectural, authoritative, evocative, rhythmic.
+        - Length: Exactly one punchy, high-impact paragraph (approx 40-60 words).
+        - Goal: Make the customer feel like they are commissioning a royal asset.
+        
+        Note: Specifically reference the color "${selectedColor.name || selectedColor}" and the "${selectedGsm} GSM" weight to make the narrative feel custom-forged for this specific selection.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      res.json({ text: response.text ? response.text.trim() : "" });
+    } catch (error: any) {
+      console.error("[Backend Gemini/enhance-description Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to enhance description" });
+    }
+  });
+
+  // 3. Generate Design Endpoint (Image Mockup creation)
+  app.post("/api/gemini/generate-design", async (req, res) => {
+    try {
+      const { prompt: genPrompt } = req.body;
+      if (!genPrompt) {
+        return res.status(400).json({ error: "Prompt is required." });
+      }
+
+      const ai = getGeminiClient();
+      const systemContext = `
+        You are a specialized Streetwear Design AI for "Kings Clothing Brand". 
+        Create a high-resolution, premium streetwear mockup image based on the user's concept.
+        The design should feel heavy, authoritative, and regal. 
+        Focus on bold typography, royal emblems, and minimalist but powerful aesthetics.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            { text: `${systemContext}\n\nUser Concept: ${genPrompt}` }
+          ]
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "1:1"
+          }
+        }
+      });
+
+      let foundImage = false;
+      let base64Data = "";
+      const candidates = (response as any).candidates;
+      if (candidates && candidates[0]?.content?.parts) {
+        for (const part of candidates[0].content.parts) {
+          if (part.inlineData) {
+            base64Data = part.inlineData.data;
+            foundImage = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundImage) {
+        return res.status(500).json({ error: "AI failed to produce a visual blueprint." });
+      }
+
+      res.json({ imageUrl: `data:image/png;base64,${base64Data}` });
+    } catch (error: any) {
+      console.error("[Backend Gemini/generate-design Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to generate design" });
+    }
+  });
+
+  // 4. Validate Design Endpoint
+  app.post("/api/gemini/validate-design", async (req, res) => {
+    try {
+      const { base64Data, mimeType } = req.body;
+      if (!base64Data) {
+        return res.status(400).json({ error: "Base64 data is required." });
+      }
+
+      const ai = getGeminiClient();
+      const prompt = `
+        You are the Kings Clothing Brand AI Validator. 
+        Perform a surgical analysis of this design asset for:
+        1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
+        2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
+        3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
+        
+        Provide a verdict on whether this design is worthy of being forged into a blueprint.
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+          parts: [
+            { text: prompt },
+            { inlineData: { data: base64Data, mimeType: mimeType || 'image/jpeg' } }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            required: ["passed", "reasoning", "suggestedName", "category"],
+            properties: {
+              passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
+              reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
+              suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
+              category: { type: Type.STRING, description: "The most suitable clothing category." },
+              score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
+            }
+          }
+        }
+      });
+
+      const result = JSON.parse(response.text);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Backend Gemini/validate-design Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to validate design" });
+    }
+  });
+
+  // 5. Generate video (Veo Video Generation Operation)
+  app.post("/api/gemini/generate-video", async (req, res) => {
+    try {
+      const { prompt, imageBytes, mimeType } = req.body;
+      if (!prompt) {
+        return res.status(400).json({ error: "Prompt is required." });
+      }
+
+      const ai = getGeminiClient();
+      let imagePart = undefined;
+      if (imageBytes && mimeType) {
+        imagePart = {
+          imageBytes,
+          mimeType
+        };
+      }
+
+      const operation = await ai.models.generateVideos({
+        model: 'veo-3.1-lite-generate-preview',
+        prompt: prompt,
+        image: imagePart,
+        config: {
+          numberOfVideos: 1,
+          resolution: '720p',
+          aspectRatio: '9:16'
+        }
+      });
+
+      res.json({ operation });
+    } catch (error: any) {
+      console.error("[Backend Gemini/generate-video Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to generate video operation" });
+    }
+  });
+
+  // 6. Get Veo Video Operation status and package video
+  app.post("/api/gemini/get-video-operation", async (req, res) => {
+    try {
+      const { operation } = req.body;
+      if (!operation) {
+        return res.status(400).json({ error: "Operation object is required." });
+      }
+
+      const ai = getGeminiClient();
+      const updatedOperation = await ai.operations.getVideosOperation({ operation });
+      
+      let base64Video = null;
+      if (updatedOperation.done) {
+        const downloadLink = updatedOperation.response?.generatedVideos?.[0]?.video?.uri;
+        if (downloadLink) {
+          const apiKey = process.env.GEMINI_API_KEY;
+          const videoResponse = await fetch(downloadLink, {
+            method: 'GET',
+            headers: {
+              'x-goog-api-key': apiKey || '',
+            },
+          });
+          if (videoResponse.ok) {
+            const buffer = await videoResponse.arrayBuffer();
+            base64Video = `data:video/mp4;base64,${Buffer.from(buffer).toString('base64')}`;
+          }
+        }
+      }
+
+      res.json({ operation: updatedOperation, base64Video });
+    } catch (error: any) {
+      console.error("[Backend Gemini/get-video-operation Error]:", error);
+      res.status(500).json({ error: error.message || "Failed to get video operation" });
+    }
   });
 
   // Notification Endpoint for Order Status Updates

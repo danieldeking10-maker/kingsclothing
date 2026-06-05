@@ -13,7 +13,6 @@ import {
   Clock,
   Film
 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 import { toast } from 'react-hot-toast';
 import { cn } from '@/src/lib/utils';
 
@@ -29,40 +28,22 @@ export function VeoVideoGenerator({ product, startingImage, onVideoGenerated }: 
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  const checkApiKey = async () => {
-    const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-    if (!hasKey) {
-      await (window as any).aistudio.openSelectKey();
-    }
-    return true;
-  };
-
   const generatePromoVideo = async () => {
     setIsGenerating(true);
     setGeneratedVideoUrl(null);
     setStatusMessage('Initializing Veo Engine...');
 
     try {
-      await checkApiKey();
-      
-      const apiKey = process.env.API_KEY || (process.env as any).GEMINI_API_KEY;
-      if (!apiKey) throw new Error('API Key missing');
-
-      const ai = new GoogleGenAI({ apiKey });
-      
       setStatusMessage('Forging Cinematic Assets...');
 
       // Convert image to base64 if provided
-      let imagePart = undefined;
+      let imageBytes = undefined;
+      let mimeType = undefined;
       if (startingImage && startingImage.startsWith('data:')) {
         const [mime, data] = startingImage.split(';base64,');
-        imagePart = {
-          imageBytes: data,
-          mimeType: mime.split(':')[1]
-        };
+        imageBytes = data;
+        mimeType = mime.split(':')[1];
       } else if (startingImage) {
-        // If it's a URL, we might need to fetch it or just use prompt-only
-        // For simplicity, we'll try to fetch if it's an external URL, but usually we need base64
         try {
             const resp = await fetch(startingImage);
             const blob = await resp.blob();
@@ -72,31 +53,38 @@ export function VeoVideoGenerator({ product, startingImage, onVideoGenerated }: 
                 reader.readAsDataURL(blob);
             });
             const [mime, data] = base64.split(';base64,');
-            imagePart = {
-                imageBytes: data,
-                mimeType: mime.split(':')[1]
-            };
+            imageBytes = data;
+            mimeType = mime.split(':')[1];
         } catch (e) {
             console.warn('Failed to fetch image for starting frame, falling back to prompt only', e);
         }
       }
 
-      let operation = await ai.models.generateVideos({
-        model: 'veo-3.1-lite-generate-preview',
-        prompt: prompt,
-        image: imagePart,
-        config: {
-          numberOfVideos: 1,
-          resolution: '720p',
-          aspectRatio: '9:16'
-        }
+      const response = await fetch('/api/gemini/generate-video', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          prompt,
+          imageBytes,
+          mimeType
+        })
       });
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate video sequence context: ${response.statusText}`);
+      }
+
+      const initData = await response.json();
+      let operation = initData.operation;
 
       setStatusMessage('Veo is rendering your vision. This can take up to 2 minutes...');
 
       // Poll for completion
       let attempts = 0;
       const maxAttempts = 30; // 30 * 10s = 300s = 5mins
+      let base64Video = null;
       
       while (!operation.done && attempts < maxAttempts) {
         attempts++;
@@ -110,13 +98,23 @@ export function VeoVideoGenerator({ product, startingImage, onVideoGenerated }: 
         }
 
         try {
-            operation = await ai.operations.getVideosOperation({ operation: operation });
-        } catch (pollError: any) {
-            if (pollError.message?.includes('Requested entity was not found')) {
-                toast.error('API Session Expired. Please re-select key.');
-                await (window as any).aistudio.openSelectKey();
-                throw pollError;
+            const pollResponse = await fetch('/api/gemini/get-video-operation', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ operation })
+            });
+
+            if (!pollResponse.ok) {
+              throw new Error(`Polling failed: ${pollResponse.statusText}`);
             }
+
+            const pollData = await pollResponse.json();
+            operation = pollData.operation;
+            base64Video = pollData.base64Video;
+        } catch (pollError: any) {
+            console.error('Video polling iteration failed:', pollError);
             throw pollError;
         }
       }
@@ -125,20 +123,13 @@ export function VeoVideoGenerator({ product, startingImage, onVideoGenerated }: 
         throw new Error('Video generation timed out. Please try again.');
       }
 
-      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-      if (!downloadLink) throw new Error('No video URI returned');
+      if (!base64Video) {
+        throw new Error('No video dataset returned from the server.');
+      }
 
-      // Fetch the video with the API key
-      const videoResponse = await fetch(downloadLink, {
-        method: 'GET',
-        headers: {
-          'x-goog-api-key': apiKey,
-        },
-      });
-
-      if (!videoResponse.ok) throw new Error('Failed to download generated video');
-
-      const videoBlob = await videoResponse.blob();
+      // Turn base64 data to local object URL so that html5 video player treats it nicely
+      const fetchResponse = await fetch(base64Video);
+      const videoBlob = await fetchResponse.blob();
       const videoUrl = URL.createObjectURL(videoBlob);
       
       setGeneratedVideoUrl(videoUrl);

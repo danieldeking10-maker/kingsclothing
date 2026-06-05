@@ -40,9 +40,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, increment, runTransaction, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { useAuth } from '../lib/AuthContext';
 import { GSM } from '../types';
 import { compressImage } from '../lib/imageUtils';
@@ -465,52 +465,26 @@ export function AgentPortal() {
     setGeneratedPreview(null);
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const systemContext = `
-        You are a specialized Streetwear Design AI for "Kings Clothing Brand". 
-        Create a high-resolution, premium streetwear mockup image based on the user's concept.
-        The design should feel heavy, authoritative, and regal. 
-        Focus on bold typography, royal emblems, and minimalist but powerful aesthetics.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            { text: `${systemContext}\n\nUser Concept: ${genPrompt}` }
-          ]
+      const response = await fetch('/api/gemini/generate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        config: {
-          imageConfig: {
-            aspectRatio: "1:1"
-          }
-        }
+        body: JSON.stringify({ prompt: genPrompt })
       });
 
-      // Find the image part in the response candidates
-      let foundImage = false;
-      const candidates = (response as any).candidates;
-      if (candidates && candidates[0]?.content?.parts) {
-        for (const part of candidates[0].content.parts) {
-          if (part.inlineData) {
-            const base64Data = part.inlineData.data;
-            setGeneratedPreview(`data:image/png;base64,${base64Data}`);
-            foundImage = true;
-            toast.success('Royal Design Forged!');
-            break;
-          }
-        }
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
       }
 
-      if (!foundImage) {
+      const data = await response.json();
+
+      if (data.imageUrl) {
+        setGeneratedPreview(data.imageUrl);
+        toast.success('Royal Design Forged!');
+      } else {
         throw new Error('AI failed to produce a visual blueprint. Refine your prompt.');
       }
-
     } catch (error: any) {
       console.error('Generation Error:', error);
       toast.error('Forge Failed: ' + error.message);
@@ -523,15 +497,16 @@ export function AgentPortal() {
     if (!generatedPreview || !user) return;
     
     try {
+      const generatedName = (genPrompt.slice(0, 20) + '...').slice(0, 100);
       await addDoc(collection(db, 'products'), {
-        name: genPrompt.slice(0, 20) + '...',
+        name: generatedName,
         category: 'T-Shirts',
         gender: 'unisex',
         description: `AI Generated concept: ${genPrompt}`,
         basePrice: 150,
         status: 'pending',
         agentId: user.uid,
-        agentName: user.displayName,
+        agentName: user.displayName || 'Imperial AI Artist',
         mockupImage: await compressImage(generatedPreview),
         allowedColors: FABRIC_COLORS.map(c => c.name),
         gsmOptions: ['260'],
@@ -542,6 +517,7 @@ export function AgentPortal() {
       setGenPrompt('');
     } catch (error: any) {
       toast.error('Injection failed: ' + error.message);
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     }
   };
 
@@ -677,6 +653,9 @@ export function AgentPortal() {
     const unsubscribeReferred = onSnapshot(qReferred, (snapshot) => {
       const agents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setReferredAgents(agents);
+    }, (error) => {
+      console.warn("qReferred listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'agents');
     });
 
     // Fetch payouts
@@ -723,6 +702,9 @@ export function AgentPortal() {
       }
       prevPayoutsRef.current = p;
       setPayouts(p);
+    }, (error) => {
+      console.warn("qPayouts listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'payouts');
     });
 
     // Fetch Referrals (New tracking logic)
@@ -742,6 +724,9 @@ export function AgentPortal() {
         return acc + (order.depositAmount || 0) * 0.1;
       }, 0);
       setTotalCommission(commission);
+    }, (error) => {
+      console.warn("ordersQuery listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'orders');
     });
 
     // Fetch all orders for brand owner for management
@@ -754,6 +739,9 @@ export function AgentPortal() {
       );
       unsubscribeAllOrders = onSnapshot(allOrdersQuery, (snapshot) => {
         setAllOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("allOrdersQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'orders');
       });
     }
 
@@ -772,6 +760,9 @@ export function AgentPortal() {
       );
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
         setAllAgents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("agentsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'agents');
       });
 
       const designsQuery = query(
@@ -781,16 +772,25 @@ export function AgentPortal() {
       );
       unsubscribeAllDesigns = onSnapshot(designsQuery, (snapshot) => {
         setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("designsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'products');
       });
 
       const promotionsQuery = query(collection(db, 'promotions'));
       unsubscribePromotions = onSnapshot(promotionsQuery, (snapshot) => {
         setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("promotionsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'promotions');
       });
 
       const couponsQuery = query(collection(db, 'coupons'));
       unsubscribeCoupons = onSnapshot(couponsQuery, (snapshot) => {
         setCoupons(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("couponsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'coupons');
       });
 
       const logsQuery = query(
@@ -800,6 +800,9 @@ export function AgentPortal() {
       );
       unsubscribeLogs = onSnapshot(logsQuery, (snapshot) => {
         setSystemLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      }, (error) => {
+        console.warn("logsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'system_logs');
       });
     }
 
@@ -1079,7 +1082,6 @@ export function AgentPortal() {
         setUploadProgress(25);
         // AI Generation protocol for missing studio vision
         try {
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
           const studioPrompt = `
             High-end luxury studio photography of a premium streetwear ${ownerForm.category} product.
             Product Identity: ${ownerForm.name}.
@@ -1088,22 +1090,22 @@ export function AgentPortal() {
             Display: Professional flat lay or lifestyle presentation.
           `;
 
-          const genResults = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [{ text: studioPrompt }] },
-            config: { imageConfig: { aspectRatio: "4:3" } }
+          const response = await fetch('/api/gemini/generate-design', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ prompt: studioPrompt })
           });
 
-          // Extract image from parts
-          const candidates = (genResults as any).candidates;
-          if (candidates && candidates[0]?.content?.parts) {
-            for (const part of candidates[0].content.parts) {
-              if (part.inlineData) {
-                finalStudioImage = `data:image/png;base64,${part.inlineData.data}`;
-                toast.success('AI Studio Vision Forged');
-                break;
-              }
-            }
+          if (!response.ok) {
+            throw new Error(`Server returned status ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.imageUrl) {
+            finalStudioImage = data.imageUrl;
+            toast.success('AI Studio Vision Forged');
           }
         } catch (genError: any) {
           console.error('Studio Gen Error:', genError);
@@ -1136,8 +1138,8 @@ export function AgentPortal() {
       setUploadProgress(90);
 
       await addDoc(collection(db, 'products'), {
-        name: ownerForm.name,
-        category: ownerForm.category,
+        name: ownerForm.name.slice(0, 100),
+        category: ownerForm.category.slice(0, 100),
         gender: ownerForm.gender || 'unisex',
         description: ownerForm.description || 'Authorized Brand Owner Submission',
         basePrice: Number(ownerForm.basePrice),
@@ -1181,6 +1183,7 @@ export function AgentPortal() {
     } catch (error: any) {
       toast.error('Owner injection failed: ' + error.message);
       setUploadProgress(0);
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     } finally {
       setIsOwnerUploading(false);
     }
@@ -1485,71 +1488,45 @@ export function AgentPortal() {
 
     // AI Verification Logic using Gemini
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
       // Extract raw base64 data to send to Gemini
       const base64Data = croppedBase64.split(',')[1];
       const mimeType = 'image/jpeg';
 
-      const prompt = `
-        You are the Kings Clothing Brand AI Validator. 
-        Perform a surgical analysis of this design asset for:
-        1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
-        2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
-        3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
-        
-        Provide a verdict on whether this design is worthy of being forged into a blueprint.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: {
-          parts: [
-            { text: prompt },
-            { inlineData: { data: base64Data, mimeType } }
-          ]
+      const response = await fetch('/api/gemini/validate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["passed", "reasoning", "suggestedName", "category"],
-            properties: {
-              passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
-              reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
-              suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
-              category: { type: Type.STRING, description: "The most suitable clothing category." },
-              score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
-            }
-          }
-        }
+        body: JSON.stringify({ base64Data, mimeType })
       });
 
-      const result = JSON.parse(response.text);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const result = await response.json();
       setScanResults(result.reasoning);
 
       if (result.passed) {
         setUploadStatus('success');
+        const finalName = (result.suggestedName || 'Streetwear Concept').slice(0, 100);
+        const finalCategory = (result.category || 'T-Shirts').slice(0, 100);
         // Persist to Firestore
         await addDoc(collection(db, 'products'), {
-          name: result.suggestedName || 'Streetwear Concept',
-          category: result.category || 'T-Shirts',
+          name: finalName,
+          category: finalCategory,
           gender: 'unisex',
           description: result.reasoning,
           basePrice: 150,
           status: 'pending',
           agentId: user.uid,
-          agentName: user.displayName,
-          mockupImage: croppedBase64,
+          agentName: user.displayName || 'Anonymous Agent',
+          mockupImage: await compressImage(croppedBase64),
           allowedColors: FABRIC_COLORS.map(c => c.name),
           gsmOptions: ['260'],
           createdAt: serverTimestamp()
         });
-        toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
+        toast.success(`"${finalName}" (${finalCategory}) Injected: Royal Sanity Check Passed`);
         setIsCropModalOpen(false);
       } else {
         setUploadStatus('rejected');
@@ -1561,6 +1538,7 @@ export function AgentPortal() {
       console.error('AI Scan Error:', error);
       toast.error('AI Scan failed: ' + error.message);
       setUploadStatus('idle');
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -1579,12 +1557,6 @@ export function AgentPortal() {
 
     // AI Verification Logic using Gemini
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
       // Convert file to base64
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
@@ -1596,61 +1568,41 @@ export function AgentPortal() {
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
-      const prompt = `
-        You are the Kings Clothing Brand AI Validator. 
-        Perform a surgical analysis of this design asset for:
-        1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
-        2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
-        3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
-        
-        Provide a verdict on whether this design is worthy of being forged into a blueprint.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: {
-          parts: [
-            { text: prompt },
-            { inlineData: { data: base64Data, mimeType: file.type } }
-          ]
+      const response = await fetch('/api/gemini/validate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["passed", "reasoning", "suggestedName", "category"],
-            properties: {
-              passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
-              reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
-              suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
-              category: { type: Type.STRING, description: "The most suitable clothing category." },
-              score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
-            }
-          }
-        }
+        body: JSON.stringify({ base64Data, mimeType: file.type })
       });
 
-      const result = JSON.parse(response.text);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const result = await response.json();
       setScanResults(result.reasoning);
 
       if (result.passed) {
         setUploadStatus('success');
+        const finalName = (result.suggestedName || 'Streetwear Concept').slice(0, 100);
+        const finalCategory = (result.category || 'T-Shirts').slice(0, 100);
         // Persist to Firestore
         await addDoc(collection(db, 'products'), {
-          name: result.suggestedName || 'Streetwear Concept',
-          category: result.category || 'T-Shirts',
+          name: finalName,
+          category: finalCategory,
           gender: 'unisex',
           description: result.reasoning,
           basePrice: 150,
           status: 'pending',
           agentId: user.uid,
-          agentName: user.displayName,
+          agentName: user.displayName || 'Anonymous Agent',
           mockupImage: await compressImage(`data:${file.type};base64,${base64Data}`),
           allowedColors: FABRIC_COLORS.map(c => c.name),
           gsmOptions: ['260'],
           createdAt: serverTimestamp()
         });
-        toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
+        toast.success(`"${finalName}" (${finalCategory}) Injected: Royal Sanity Check Passed`);
       } else {
         setUploadStatus('rejected');
         toast.error('Authority Rejected');
@@ -1660,6 +1612,7 @@ export function AgentPortal() {
       console.error('AI Scan Error:', error);
       toast.error('AI Scan failed: ' + error.message);
       setUploadStatus('idle');
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     } finally {
       setIsUploading(false);
       // Auto-reset the console and status after a delay unless it was a success/rejection that needs viewing

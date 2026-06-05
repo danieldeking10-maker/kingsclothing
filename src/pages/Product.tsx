@@ -30,7 +30,6 @@ import {
   Bell
 } from 'lucide-react';
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion, runTransaction, where, getDocs, limit } from 'firebase/firestore';
-import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
@@ -556,39 +555,31 @@ export function ProductPage() {
     setIsEnhancing(true);
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const prompt = `
-        You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
-        Your mission is to forge a unique, commanding product narrative for "${product.name}".
-        
-        Product Details:
-        - Category: ${product.category}
-        - Fabric Shade: ${selectedColor.name}
-        - Structural Sizing: ${selectedSize}
-        - Fabric Weight: ${selectedGsm} GSM
-        - Base Blueprint: ${product.description}
-        
-        Brand Guidelines:
-        - Theme: "Ghanaian Craftsmanship" (soul of Accra, precision of heritage) meets "Streetwear Authority" (unapologetic leadership).
-        - Vocabulary: Architectural, authoritative, evocative, rhythmic.
-        - Length: Exactly one punchy, high-impact paragraph (approx 40-60 words).
-        - Goal: Make the customer feel like they are commissioning a royal asset.
-        
-        Note: Specifically reference the color "${selectedColor.name}" and the "${selectedGsm} GSM" weight to make the narrative feel custom-forged for this specific selection.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+      const response = await fetch('/api/gemini/enhance-description', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product: {
+            name: product.name,
+            category: product.category,
+            description: product.description
+          },
+          selectedColor,
+          selectedSize,
+          selectedGsm
+        })
       });
 
-      if (response.text) {
-        setEnhancedDescription(response.text.trim());
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.text) {
+        setEnhancedDescription(data.text);
         toast.success('Narrative Forged');
         
         // Authority Directive: Focus the viewport on the newly forged narrative
