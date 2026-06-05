@@ -31,6 +31,7 @@ import { useAuth } from '../lib/AuthContext';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
+import { GarmentPipelineTracker } from '../components/GarmentPipelineTracker';
 
 const STEPS = [
   { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verification' },
@@ -452,6 +453,9 @@ export function OrdersPage() {
                   )}
                 </div>
               </div>
+
+              {/* Fabrication Pipeline & Status Progress Tracker */}
+              <GarmentPipelineTracker order={trackedOrder} />
 
               {/* Order Manifest Details Grid */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">

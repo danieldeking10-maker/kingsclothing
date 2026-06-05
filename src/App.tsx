@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
-import { AnimatePresence } from "motion/react";
+import { AnimatePresence, LazyMotion, domMax, m } from "motion/react";
 import { AuthProvider } from "./lib/AuthContext";
 import { CartProvider } from "./lib/CartContext";
 import { Header, Footer } from "./components/Navigation";
@@ -35,6 +35,88 @@ const PageLoader = () => (
   </div>
 );
 
+// High-end aesthetic page variants (cross-fade and slide-up animation effect)
+const pageVariants = {
+  initial: {
+    opacity: 0,
+    y: 16,
+  },
+  animate: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.45,
+      ease: [0.16, 1, 0.3, 1] as const, // Designer quintic/exponential decel ease-out
+    },
+  },
+  exit: {
+    opacity: 0,
+    y: -12,
+    transition: {
+      duration: 0.3,
+      ease: [0.7, 0, 0.84, 0] as const, // Clean acceleration ease-in
+    },
+  },
+};
+
+function AppContent() {
+  const location = useLocation();
+
+  return (
+    <div className="min-h-screen flex flex-col font-sans selection:bg-accent selection:text-black bg-background text-white">
+      <ProgressBar />
+      <Header />
+      <main className="flex-grow overflow-hidden">
+        <Suspense fallback={<PageLoader />}>
+          <LazyMotion features={domMax}>
+            <AnimatePresence mode="wait">
+              <m.div
+                key={location.pathname}
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                className="w-full h-full"
+              >
+                <Routes location={location}>
+                  <Route path="/" element={<HomePage />} />
+                  <Route path="/shop" element={<ShopPage />} />
+                  <Route path="/product/:id" element={<ProductPage />} />
+                  <Route path="/agent" element={<AgentPortal />} />
+                  <Route path="/auth" element={<AuthPage />} />
+                  <Route path="/about" element={<AboutPage />} />
+                  <Route path="/tos" element={<TOSPage />} />
+                  <Route path="/faq" element={<FAQPage />} />
+                  <Route path="/size-guide" element={<SizeGuidePage />} />
+                  <Route path="/order/:id" element={<OrderConfirmationPage />} />
+                  <Route path="/orders" element={<OrdersPage />} />
+                </Routes>
+              </m.div>
+            </AnimatePresence>
+          </LazyMotion>
+        </Suspense>
+      </main>
+      <Footer />
+      <Toaster 
+        position="bottom-right"
+        toastOptions={{
+          style: {
+            background: '#000',
+            color: '#fff',
+            fontFamily: 'Inter, sans-serif',
+            fontSize: '12px',
+            fontWeight: 'bold',
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+            borderRadius: '12px',
+            border: '1px solid rgba(255,255,255,0.1)'
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export default function App() {
   useEffect(() => {
     initGlobalErrorHandlers();
@@ -43,51 +125,12 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-      <AuthProvider>
-        <CartProvider>
-          <div className="min-h-screen flex flex-col font-sans selection:bg-accent selection:text-black bg-background text-white">
-            <ProgressBar />
-            <Header />
-            <main className="flex-grow">
-              <Suspense fallback={<PageLoader />}>
-                <AnimatePresence mode="wait">
-                  <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/shop" element={<ShopPage />} />
-                    <Route path="/product/:id" element={<ProductPage />} />
-                    <Route path="/agent" element={<AgentPortal />} />
-                    <Route path="/auth" element={<AuthPage />} />
-                    <Route path="/about" element={<AboutPage />} />
-                    <Route path="/tos" element={<TOSPage />} />
-                    <Route path="/faq" element={<FAQPage />} />
-                    <Route path="/size-guide" element={<SizeGuidePage />} />
-                    <Route path="/order/:id" element={<OrderConfirmationPage />} />
-                    <Route path="/orders" element={<OrdersPage />} />
-                  </Routes>
-                </AnimatePresence>
-              </Suspense>
-            </main>
-            <Footer />
-            <Toaster 
-              position="bottom-right"
-              toastOptions={{
-                style: {
-                  background: '#000',
-                  color: '#fff',
-                  fontFamily: 'Inter, sans-serif',
-                  fontSize: '12px',
-                  fontWeight: 'bold',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                  borderRadius: '12px',
-                  border: '1px solid rgba(255,255,255,0.1)'
-                }
-              }}
-            />
-          </div>
-        </CartProvider>
-      </AuthProvider>
-    </Router>
+        <AuthProvider>
+          <CartProvider>
+            <AppContent />
+          </CartProvider>
+        </AuthProvider>
+      </Router>
     </ErrorBoundary>
   );
 }

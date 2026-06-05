@@ -12,6 +12,7 @@ import toast from 'react-hot-toast';
 import { ProductCard } from '@/src/components/ProductCard';
 import { ProductCardSkeleton } from '@/src/components/ui/Skeleton';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
+import { StyleQuiz } from '../components/StyleQuiz';
 
 // Helper to get price from the nested pricing object
 const getPrice = (product: any): number => {
@@ -42,6 +43,7 @@ export function ShopPage() {
   const sortParam = searchParams.get('sort') || 'newest';
   
   const [products, setProducts] = useState<any[]>([]);
+  const [styleQuizFilter, setStyleQuizFilter] = useState<{ category: string; gender: string; color: string; gsm: string; ids?: string[] } | null>(null);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedGender, setSelectedGender] = useState('All');
   const [selectedColor, setSelectedColor] = useState('All');
@@ -99,7 +101,9 @@ export function ShopPage() {
       const matchesGSM = selectedGSM === 'All' || (p.gsmOptions && p.gsmOptions.includes(selectedGSM));
       const matchesSale = !showOnlySale || p.isOnSale === true;
 
-      return matchesSearch && matchesCategory && matchesGender && matchesPrice && matchesColor && matchesGSM && matchesSale;
+      const matchesQuiz = !styleQuizFilter || !styleQuizFilter.ids || styleQuizFilter.ids.includes(p.id);
+
+      return matchesQuiz && matchesSearch && matchesCategory && matchesGender && matchesPrice && matchesColor && matchesGSM && matchesSale;
     }).sort((a, b) => {
       if (sortBy === 'newest') {
         const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
@@ -112,7 +116,7 @@ export function ShopPage() {
       if (sortBy === 'price-high') return priceB - priceA;
       return 0;
     });
-  }, [products, search, selectedCategory, selectedGender, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy]);
+  }, [products, search, selectedCategory, selectedGender, selectedColor, selectedGSM, showOnlySale, priceRange, sortBy, styleQuizFilter]);
 
   const isNew = (createdAt: any) => {
     if (!createdAt) return false;
@@ -135,6 +139,18 @@ export function ShopPage() {
     } catch (error) {
       console.error('Delete error:', error);
       toast.error('Failed to delete design');
+    }
+  };
+
+  const handleApplyQuizRecommendations = (criteria: { category: string; gender: string; color: string; gsm: string; ids?: string[] } | null) => {
+    setStyleQuizFilter(criteria);
+    if (criteria) {
+      if (criteria.gender && criteria.gender !== 'All') {
+        setSelectedGender(criteria.gender);
+      }
+      toast.success('Style logic routing coefficients integrated!');
+    } else {
+      toast.success('Gated recommendations cleared');
     }
   };
 
@@ -185,6 +201,13 @@ export function ShopPage() {
             </div>
           </div>
         </header>
+
+        {/* Style Recommendation Quiz */}
+        <StyleQuiz 
+          products={products} 
+          onApplyRecommendations={handleApplyQuizRecommendations} 
+          activeRecommendation={!!styleQuizFilter} 
+        />
 
         {/* Filters & Sorting */}
         <div className="flex flex-col space-y-12 mb-16">
