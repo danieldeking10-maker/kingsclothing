@@ -9,46 +9,81 @@
  */
 export async function compressImage(
   base64Str: string,
-  maxWidth: number = 1024,
-  maxHeight: number = 1024,
-  quality: number = 0.7
+  maxWidth: number = 512,
+  maxHeight: number = 512,
+  quality: number = 0.55
 ): Promise<string> {
+  const MAX_SAFE_SIZE_BYTES = 50 * 1024; // Aim for <= ~50KB per image so multiple views easily fit in 1MB document
+
   return new Promise((resolve, reject) => {
+    // If it's a small placeholder SVG, skip to prevent blank outputs
+    if (base64Str.startsWith('data:image/svg+xml') || base64Str.length < 2000) {
+      resolve(base64Str);
+      return;
+    }
+
     const img = new Image();
     img.src = base64Str;
     img.onload = () => {
-      let width = img.width;
-      let height = img.height;
+      let currentWidth = img.width;
+      let currentHeight = img.height;
+      let currentQuality = quality;
+      let curMaxWidth = maxWidth;
+      let curMaxHeight = maxHeight;
 
-      // Calculate new dimensions while maintaining aspect ratio
-      if (width > height) {
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
+      const performCompression = (wLimit: number, hLimit: number, q: number): string => {
+        let width = currentWidth;
+        let height = currentHeight;
+
+        // Calculate new dimensions while maintaining aspect ratio
+        if (width > height) {
+          if (width > wLimit) {
+            height *= wLimit / width;
+            width = wLimit;
+          }
+        } else {
+          if (height > hLimit) {
+            width *= hLimit / height;
+            height = hLimit;
+          }
         }
-      } else {
-        if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
         }
+
+        // Draw solid background to avoid issues with transparency converting to black JPEGs
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.drawImage(img, 0, 0, width, height);
+        return canvas.toDataURL('image/jpeg', q);
+      };
+
+      try {
+        let result = performCompression(curMaxWidth, curMaxHeight, currentQuality);
+        let sizeInBytes = result.length * 0.75;
+        let iterations = 0;
+
+        // Progressively scale down and compress further if size is still too large
+        while (sizeInBytes > MAX_SAFE_SIZE_BYTES && iterations < 5) {
+          curMaxWidth = Math.floor(curMaxWidth * 0.8);
+          curMaxHeight = Math.floor(curMaxHeight * 0.8);
+          currentQuality = Math.max(0.15, currentQuality - 0.1);
+          result = performCompression(curMaxWidth, curMaxHeight, currentQuality);
+          sizeInBytes = result.length * 0.75;
+          iterations++;
+        }
+
+        resolve(result);
+      } catch (err) {
+        reject(err);
       }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Failed to get canvas context'));
-        return;
-      }
-
-      ctx.drawImage(img, 0, 0, width, height);
-
-      // Return as JPEG to significantly reduce size compared to PNG
-      // We start with the requested quality and check size
-      const result = canvas.toDataURL('image/jpeg', quality);
-      resolve(result);
     };
     img.onerror = (err) => reject(err);
   });

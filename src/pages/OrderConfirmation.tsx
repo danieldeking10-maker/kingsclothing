@@ -25,7 +25,7 @@ import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction, collecti
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { formatGHC, cn } from '@/src/lib/utils';
-import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
 import { initPaystackMock } from '../lib/paystackMock';
 import { logPaystackCallback } from '../lib/paystackLogger';
@@ -72,7 +72,7 @@ export function OrderConfirmationPage() {
 
   const [isAlerting, setIsAlerting] = useState(false);
 
-  const handleTriggerAlert = () => {
+  const handleTriggerAlert = async () => {
     if (!user?.email && !order?.customerEmail) {
       toast.error('Customer email required for Paystack');
       return;
@@ -81,63 +81,152 @@ export function OrderConfirmationPage() {
     setIsAlerting(true);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
-    const handlePaymentSuccess = async (response: any) => {
-      toast.dismiss(loadingToast);
-      
-      // Audit and validate response to stop false-positive payments
-      const audit = await logPaystackCallback(
-        'OrderConfirmation PayNow',
+    const orderIdRef = order?.id || 'KNGS_TRY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+
+    const metadata = {
+      custom_fields: [
         {
-          reference: order?.id || 'MANUAL_REF_CRF',
-          amount: order?.depositAmount || 0,
-          email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand'
-        },
-        response
-      );
-
-      if (!audit.isValid) {
-        toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
-        setIsAlerting(false);
-        return;
-      }
-
-      toast.success('Payment Received Successfully');
-      setIsAlerting(false);
-      if (id) {
-         try {
-            await updateDoc(doc(db, 'orders', id), {
-              paymentMethod: 'momo',
-              paystackReference: response.reference || response.id || 'N/A'
-            });
-         } catch (dbErr) {
-            console.error("Failed to update payment details on document:", dbErr);
-         }
-      }
-      await handleConfirmPayment();
-    };
-
-    const handlePaymentClosed = () => {
-      setIsAlerting(false);
-      toast.dismiss(loadingToast);
-      toast.error('Transaction Terminated by User');
+          display_name: "Order Confirmation",
+          variable_name: "order_confirmation",
+          value: orderIdRef
+        }
+      ]
     };
 
     try {
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
+          amount: Math.round((order?.depositAmount || 0) * 100), // convert to subunits
+          reference: orderIdRef,
+          metadata
+        })
+      });
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
+
+      const initData = await initRes.json();
+
+      const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'OrderConfirmation PayNow',
+          {
+            reference: orderIdRef,
+            amount: order?.depositAmount || 0,
+            email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+          setIsAlerting(false);
+          return;
+        }
+
+        toast.success('Payment Received Successfully');
+        setIsAlerting(false);
+        if (id) {
+           try {
+              await updateDoc(doc(db, 'orders', id), {
+                paymentMethod: 'momo',
+                paystackReference: response.reference || response.id || 'N/A'
+              });
+           } catch (dbErr) {
+              console.error("Failed to update payment details on document:", dbErr);
+           }
+        }
+        await handleConfirmPayment();
+      };
+
+      const handlePaymentClosed = () => {
+        setIsAlerting(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
+
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
         amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
-        ref: order?.id || '',
-        reference: order?.id || '',
-        callback: handlePaymentSuccess,
-        onSuccess: handlePaymentSuccess,
+        ref: orderIdRef,
+        reference: orderIdRef,
+        access_code: initData.data?.access_code || undefined,
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || orderIdRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsAlerting(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsAlerting(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || orderIdRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsAlerting(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsAlerting(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
         onClose: handlePaymentClosed,
         onCancel: handlePaymentClosed
       };
 
-      initPaystackMock();
+      if (isSimulation) {
+        initPaystackMock();
+      }
+      
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
       toast.dismiss(loadingToast);
@@ -182,6 +271,14 @@ export function OrderConfirmationPage() {
         const orderData = orderSnap.data();
         if (orderData.status !== 'pending') throw new Error("Order is no longer pending");
 
+        // Perform agent read FIRST before any updates
+        let agentSnap = null;
+        let agentRef = null;
+        if (orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
+
         // 1. Update Order Status
         transaction.update(orderRef, {
           status: 'processing',
@@ -202,24 +299,19 @@ export function OrderConfirmationPage() {
         });
 
         // 2. Update Agent Profile Stats (The person who made the purchase)
-        if (orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
-          const agentSnap = await transaction.get(agentRef);
-          
-          if (agentSnap.exists()) {
-            const agentData = agentSnap.data();
-            transaction.update(agentRef, {
-              'stats.totalSales': increment(orderData.totalAmount),
-            });
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
+          transaction.update(agentRef, {
+            'stats.totalSales': increment(orderData.totalAmount),
+          });
 
-            // 3. Credit Referrer if applicable (10% commission on total sales)
-            if (agentData?.referredBy) {
-              const referrerRef = doc(db, 'agents', agentData.referredBy);
-              const commissionAmount = orderData.totalAmount * 0.10;
-              transaction.update(referrerRef, {
-                'stats.commissionEarned': increment(commissionAmount)
-              });
-            }
+          // 3. Credit Referrer if applicable (10% commission on total sales)
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            const commissionAmount = orderData.totalAmount * 0.10;
+            transaction.update(referrerRef, {
+              'stats.commissionEarned': increment(commissionAmount)
+            });
           }
         }
       });
@@ -245,6 +337,14 @@ export function OrderConfirmationPage() {
         if (!orderSnap.exists()) throw new Error("Order does not exist");
         const orderData = orderSnap.data();
         const wasConfirmed = orderData.status !== 'pending';
+
+        // Perform agent read FIRST before any updates
+        let agentSnap = null;
+        let agentRef = null;
+        if (wasConfirmed && orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
 
         // 1. Update Order Status
         transaction.update(orderRef, {
@@ -274,24 +374,19 @@ export function OrderConfirmationPage() {
         });
 
         // 3. Deduct from stats if it was previously confirmed
-        if (wasConfirmed && orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
-          const agentSnap = await transaction.get(agentRef);
-          
-          if (agentSnap.exists()) {
-            const agentData = agentSnap.data();
-            transaction.update(agentRef, {
-              'stats.totalSales': increment(-orderData.totalAmount),
-            });
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
+          transaction.update(agentRef, {
+            'stats.totalSales': increment(-orderData.totalAmount),
+          });
 
-            // 4. Reverse commission if referredBy exists
-            if (agentData?.referredBy) {
-              const referrerRef = doc(db, 'agents', agentData.referredBy);
-              const commissionAmount = orderData.totalAmount * 0.10;
-              transaction.update(referrerRef, {
-                'stats.commissionEarned': increment(-commissionAmount)
-              });
-            }
+          // 4. Reverse commission if referredBy exists
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            const commissionAmount = orderData.totalAmount * 0.10;
+            transaction.update(referrerRef, {
+              'stats.commissionEarned': increment(-commissionAmount)
+            });
           }
         }
       });
@@ -717,7 +812,7 @@ export function OrderConfirmationPage() {
                            <div>
                               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent mb-2">Automated Alert Active</p>
                               <p className="text-white/40 text-[9px] leading-relaxed font-bold uppercase tracking-tight">
-                                 A secure payment request has been signaled from <span className="text-white font-black">{PAYMENT_MOBILE_MONEY}</span> to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> payment.
+                                 A secure Paystack payment request has been signaled to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> payment.
                               </p>
                            </div>
                         </div>

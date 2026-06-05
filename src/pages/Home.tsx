@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, limit, getDocs, orderBy, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { formatGHC } from '@/src/lib/utils';
-import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
 import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
 

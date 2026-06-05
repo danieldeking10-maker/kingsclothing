@@ -1262,6 +1262,16 @@ export function AgentPortal() {
         const orderData = orderSnap.data();
         const oldStatus = orderData.status;
 
+        // Perform any additional reads FIRST before any updates/sets
+        let agentSnap = null;
+        let agentRef = null;
+        if (orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
+
+        // --- ALL READS DONE. WRITES BEGIN AFTER ---
+
         transaction.update(orderRef, {
           status: newStatus,
           updatedAt: serverTimestamp()
@@ -1293,8 +1303,8 @@ export function AgentPortal() {
         });
 
         // Handle Stats based on status transition
-        if (orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
           
           // 1. Pending -> Processing (Confirmed)
           if (oldStatus === 'pending' && newStatus === 'processing') {
@@ -1303,15 +1313,11 @@ export function AgentPortal() {
             });
             
             // Credit Referrer
-            const agentSnap = await transaction.get(agentRef);
-            if (agentSnap.exists()) {
-              const agentData = agentSnap.data();
-              if (agentData?.referredBy) {
-                const referrerRef = doc(db, 'agents', agentData.referredBy);
-                transaction.update(referrerRef, {
-                  'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
-                });
-              }
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
+              });
             }
           }
           
@@ -1331,15 +1337,11 @@ export function AgentPortal() {
             });
             
             // Reverse Referrer Commission
-            const agentSnap = await transaction.get(agentRef);
-            if (agentSnap.exists()) {
-              const agentData = agentSnap.data();
-              if (agentData?.referredBy) {
-                const referrerRef = doc(db, 'agents', agentData.referredBy);
-                transaction.update(referrerRef, {
-                  'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
-                });
-              }
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
+              });
             }
           }
         }

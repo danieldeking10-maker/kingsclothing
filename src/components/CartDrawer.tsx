@@ -120,6 +120,55 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       const depositAmount = finalPrice;
       const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
+      const metadata = {
+        custom_fields: [
+          {
+            display_name: "Cart Details",
+            variable_name: "cart_details",
+            value: items.map(i => `${i.name} (x${i.quantity})`).join(', ')
+          },
+          {
+            display_name: "Coupon Code",
+            variable_name: "coupon_code",
+            value: appliedCoupon?.code || "NONE"
+          },
+          {
+            display_name: "Momo Number",
+            variable_name: "momo_number",
+            value: momoNumber
+          },
+          {
+            display_name: "Provider",
+            variable_name: "provider",
+            value: momoProvider
+          },
+          {
+            display_name: "Customer Identity",
+            variable_name: "customer_identity",
+            value: user ? `User: ${user.displayName}` : `Guest: ${guestName} (${guestEmail})`
+          }
+        ]
+      };
+
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || guestEmail || 'customer@kingsclothing.brand',
+          amount: Math.round(depositAmount * 100), // convert to subunits
+          reference: genRef,
+          metadata
+        })
+      });
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
+
+      const initData = await initRes.json();
+
       const handlePaymentSuccess = async (response: any) => {
         toast.dismiss(loadingToast);
         
@@ -218,6 +267,9 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         toast.error('Transaction Terminated by User');
       };
 
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+      
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || guestEmail || 'customer@kingsclothing.brand',
@@ -226,49 +278,75 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         channels: ['mobile_money', 'card'],
         ref: genRef,
         reference: genRef,
-        metadata: {
-          custom_fields: [
-            {
-              display_name: "Cart Details",
-              variable_name: "cart_details",
-              value: items.map(i => `${i.name} (x${i.quantity})`).join(', ')
-            },
-            {
-              display_name: "Coupon Code",
-              variable_name: "coupon_code",
-              value: appliedCoupon?.code || "NONE"
-            },
-            {
-              display_name: "Momo Number",
-              variable_name: "momo_number",
-              value: momoNumber
-            },
-            {
-              display_name: "Provider",
-              variable_name: "provider",
-              value: momoProvider
-            },
-            {
-              display_name: "Customer Identity",
-              variable_name: "customer_identity",
-              value: user ? `User: ${user.displayName}` : `Guest: ${guestName} (${guestEmail})`
+        access_code: initData.data?.access_code || undefined,
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
             }
-          ]
+          }
         },
-        callback: handlePaymentSuccess,
-        onSuccess: handlePaymentSuccess,
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
         onClose: handlePaymentClosed,
         onCancel: handlePaymentClosed
       };
 
-      initPaystackMock();
+      if (isSimulation) {
+        initPaystackMock();
+      }
+      
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
       toast.dismiss(loadingToast);
 
     } catch (error: any) {
       toast.dismiss(loadingToast);
-      toast.error('Deployment Failed: ' + error.message);
+      toast.error('Terminal Error: ' + error.message);
       setIsOrdering(false);
     }
   };

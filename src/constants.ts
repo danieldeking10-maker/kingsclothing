@@ -33,7 +33,6 @@ export const PRICING = {
 
 export const SIZES = ['S', 'M', 'L', 'XL', 'XXL'];
 
-export const PAYMENT_MOBILE_MONEY = '0241953881';
 export const SUPPORT_INTERACTION_NUMBER = '0534717125';
 export const DEPOSIT_PERCENTAGE = 1.0;
 

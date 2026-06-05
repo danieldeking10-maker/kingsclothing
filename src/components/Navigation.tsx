@@ -9,7 +9,7 @@ import { useCart } from '../lib/CartContext';
 import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
-import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
+import { SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
 import { collection, query, where, getDocs, limit, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -1111,7 +1111,7 @@ export function Footer() {
             <p className="text-sm font-bold text-accent uppercase tracking-widest leading-relaxed mb-4">{SUPPORT_INTERACTION_NUMBER}</p>
             <div className="h-px bg-white/5 w-full mb-4"></div>
             <p className="text-[10px] text-white/40 uppercase font-black tracking-widest mb-2 italic tracking-[0.3em]">Payment Hub</p>
-            <p className="text-[9px] font-bold text-white uppercase tracking-widest leading-relaxed">Secure Paystack Transactions Integrated with {PAYMENT_MOBILE_MONEY}</p>
+            <p className="text-[9px] font-bold text-white uppercase tracking-widest leading-relaxed">Secure Paystack & Mobile Money Transactions Enabled</p>
           </div>
         </div>
 

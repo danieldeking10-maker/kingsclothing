@@ -240,146 +240,178 @@ function renderSimulatedGateway(config: any) {
   function showMomoPinScreen(momoNumber: string, provider: string) {
     let providerName = 'MTN Mobile Money';
     let providerInitials = 'MTN';
+    let providerColor = '#F27D26';
     let providerBg = 'bg-yellow-500 text-black border border-yellow-400 font-extrabold';
 
     if (provider === 'telecel') {
       providerName = 'Telecel Cash';
       providerInitials = 'TC';
       providerBg = 'bg-red-600 text-white border border-red-500 font-extrabold';
+      providerColor = '#EF4444';
     } else if (provider === 'airteltigo') {
       providerName = 'AirtelTigo Money';
       providerInitials = 'AT';
       providerBg = 'bg-blue-600 text-white border border-blue-400 font-extrabold';
+      providerColor = '#3B82F6';
     }
 
+    // 1. Transition standard Paystack container to "Awaiting USSD Response" state
     modalContainer.innerHTML = `
-      <div class="space-y-6" style="animation: modalEnter 0.2s ease-out;">
-        <div class="flex justify-between items-center border-b border-white/5 pb-4">
-          <div class="flex items-center gap-3">
-            <!-- Network Circle -->
-            <div class="w-10 h-10 rounded-full flex items-center justify-center font-black text-xs ${providerBg}">
-              ${providerInitials}
-            </div>
-            <div>
-              <h3 class="text-xs font-black uppercase tracking-[0.2em] text-[#F27D26]">${providerName}</h3>
-              <p class="text-[9px] uppercase font-mono text-white/40">Secure Wallet Debit PIN</p>
-            </div>
-          </div>
-          <span class="text-xs font-mono font-black text-white/80">${formattedAmount}</span>
+      <div class="space-y-6 text-center py-6" style="animation: modalEnter 0.2s ease-out;">
+        <div class="w-16 h-16 rounded-full bg-white/[0.02] border border-white/5 flex items-center justify-center text-[#F27D26] mx-auto relative">
+          <span class="absolute inset-0 rounded-full border border-[#F27D26]/20 animate-ping"></span>
+          <svg class="w-8 h-8 animate-pulse text-[#F27D26]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        
+        <div class="space-y-2">
+          <h3 class="text-xs font-black uppercase tracking-[0.2em] text-[#F27D26]">Awaiting Device Authorization</h3>
+          <p class="text-[9px] uppercase font-mono text-white/40">Secure command trigger dispatched</p>
         </div>
 
-        <div class="text-center space-y-2">
-          <p class="text-[10px] uppercase font-bold tracking-widest text-[#F27D26] leading-relaxed">
-            SIMULATED PUSH NOTIFICATION SENT TO <span class="text-white font-mono">${momoNumber}</span>
-          </p>
-          <p class="text-[9px] uppercase tracking-widest text-white/30 italic">
-            Please enter your 4-digit wallet PIN on the keypad below to authorize the transfer.
-          </p>
-        </div>
+        <p class="text-[10px] text-white/60 leading-relaxed font-sans max-w-xs mx-auto">
+          We have triggered a secure mobile network command prompt on your device <span class="text-white font-mono font-bold">${momoNumber}</span>. Please authorize on the USSD dialogue overlay to sign the transaction.
+        </p>
 
-        <!-- PIN Input Circles -->
-        <div class="flex justify-center gap-4 py-2">
-          <div id="pin-dot-1" class="w-4 h-4 rounded-full border border-white/20 transition-all"></div>
-          <div id="pin-dot-2" class="w-4 h-4 rounded-full border border-white/20 transition-all"></div>
-          <div id="pin-dot-3" class="w-4 h-4 rounded-full border border-white/20 transition-all"></div>
-          <div id="pin-dot-4" class="w-4 h-4 rounded-full border border-white/20 transition-all"></div>
-        </div>
-
-        <!-- Simulated Keypad -->
-        <div class="grid grid-cols-3 gap-3 max-w-[280px] mx-auto pt-2">
-          ${['1','2','3','4','5','6','7','8','9','CLEAR','0','DELETE'].map(key => `
-            <button 
-              data-key="${key}"
-              class="keypad-btn aspect-square rounded-2xl bg-white/[0.03] hover:bg-white/10 active:scale-90 border border-white/5 text-sm font-black tracking-widest transition-all cursor-pointer flex items-center justify-center p-3 text-white"
-            >
-              ${key}
-            </button>
-          `).join('')}
-        </div>
-
-        <!-- Action -->
-        <div class="space-y-3 pt-2">
-          <button id="sim-btn-pin-submit" disabled class="w-full bg-[#F27D26] text-black font-black uppercase tracking-widest py-4 rounded-2xl text-xs transition-all duration-300 opacity-40 cursor-not-allowed">
-            CONFIRM WALLET TRANSFER
-          </button>
-          <button id="sim-btn-pin-back" class="w-full bg-white/5 border border-white/10 hover:bg-white/10 active:scale-95 text-white/60 font-black uppercase tracking-widest py-3 rounded-2xl text-[9px] transition-all">
-            CANCEL AND GO BACK
-          </button>
+        <div class="pt-2">
+          <span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white/[0.03] border border-white/5 rounded-full">
+            <svg class="animate-spin h-3 w-3 text-[#F27D26]" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-[8.5px] font-mono uppercase tracking-widest text-[#F27D26] animate-pulse">Waiting for wallet ledger...</span>
+          </span>
         </div>
       </div>
     `;
 
-    let enteredPin = '';
-    const dots = [
-      document.getElementById('pin-dot-1')!,
-      document.getElementById('pin-dot-2')!,
-      document.getElementById('pin-dot-3')!,
-      document.getElementById('pin-dot-4')!
-    ];
-    const confirmBtn = document.getElementById('sim-btn-pin-submit') as HTMLButtonElement;
-    const backBtn = document.getElementById('sim-btn-pin-back')!;
+    // 2. Generate and trigger the System-styled USSD command prompt popup overlay
+    const ussdOverlay = document.createElement('div');
+    ussdOverlay.id = 'paystack-ussd-command-overlay';
+    ussdOverlay.className = 'fixed inset-0 bg-black/85 backdrop-blur-md z-[100000] flex items-center justify-center p-4';
+    
+    ussdOverlay.innerHTML = `
+      <div class="w-full max-w-[340px] bg-[#161618] border border-white/10 rounded-[2rem] p-6 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] text-center space-y-5 text-white" id="paystack-ussd-dialog" style="animation: ussdEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;">
+        
+        <!-- Header to look exactly like iOS SIM toolkit / USSD system popup -->
+        <div class="flex items-center gap-2 justify-center pb-2 border-b border-white/5">
+          <div class="w-2.5 h-2.5 rounded-full animate-pulse" style="background-color: ${providerColor}"></div>
+          <span class="text-[9.5px] font-black uppercase tracking-[0.25em] text-white/55">${providerName} Menu</span>
+        </div>
 
-    function updatePinDisplay() {
-      for (let i = 0; i < 4; i++) {
-        if (i < enteredPin.length) {
-          dots[i].className = 'w-4 h-4 rounded-full bg-[#F27D26] border border-[#F27D26] transition-all scale-110';
-        } else {
-          dots[i].className = 'w-4 h-4 rounded-full border border-white/20 transition-all scale-100';
+        <!-- Terminal Command Message style -->
+        <div class="space-y-3 text-left">
+          <p class="text-[11px] font-mono text-white/90 leading-relaxed bg-black/50 border border-white/5 p-4 rounded-xl">
+             Authorize collection mandate of <span class="text-[#F27D26] font-bold font-sans">${formattedAmount}</span> to <span class="text-white font-bold">KINGS CLOTHING ARCHIVE</span>?<br/>
+             <span class="text-white/40 block mt-2 text-[10px] uppercase font-black tracking-widest leading-none">Ref: ${config.ref?.slice(0, 8).toUpperCase() || 'KNGS_MOMO'}</span>
+          </p>
+          <p class="text-[9px] uppercase font-black text-white/40 tracking-[0.15em] text-center pt-1 animate-pulse">
+             Enter 4-Digit Wallet PIN:
+          </p>
+        </div>
+
+        <!-- USSD Monospace Password Input -->
+        <div class="max-w-[160px] mx-auto">
+          <input 
+            type="password" 
+            id="ussd-pin-input" 
+            maxlength="4" 
+            pattern="[0-9]*"
+            inputmode="numeric"
+            placeholder="••••" 
+            class="w-full bg-black/60 border border-white/15 focus:border-[#F27D26] rounded-xl py-3 text-center font-mono text-xl tracking-[0.55em] text-white outline-none transition-all placeholder:text-white/15 text-[18px]" 
+            autofocus
+          />
+        </div>
+
+        <!-- Prompt buttons mimicking phone interface (Cancel Left, Send Right) -->
+        <div class="grid grid-cols-2 gap-3 pt-1">
+          <button id="ussd-btn-cancel" class="py-3 px-4 bg-white/5 border border-white/5 hover:bg-white/10 active:scale-95 rounded-xl text-[10px] font-black uppercase tracking-widest text-white/50 transition-all cursor-pointer h-12">
+            Cancel
+          </button>
+          <button id="ussd-btn-send" disabled class="py-3 px-4 bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all h-12 opacity-40 cursor-not-allowed">
+            Send
+          </button>
+        </div>
+      </div>
+      
+      <style>
+        @keyframes ussdEnter {
+          from { transform: scale(0.9) translateY(10px); opacity: 0; }
+          to { transform: scale(1) translateY(0); opacity: 1; }
         }
-      }
-      if (enteredPin.length === 4) {
-        confirmBtn.removeAttribute('disabled');
-        confirmBtn.className = 'w-full bg-[#F27D26] text-black font-black uppercase tracking-widest py-4 rounded-2xl text-xs transition-all opacity-100 cursor-pointer hover:opacity-90 active:scale-95';
+      </style>
+    `;
+
+    document.body.appendChild(ussdOverlay);
+
+    const pinInput = document.getElementById('ussd-pin-input') as HTMLInputElement;
+    const btnCancel = document.getElementById('ussd-btn-cancel')!;
+    const btnSend = document.getElementById('ussd-btn-send') as HTMLButtonElement;
+
+    // Direct input auto-focus when it is ready
+    setTimeout(() => {
+      if (pinInput) pinInput.focus();
+    }, 50);
+
+    // Validate 4-digit numeric code
+    pinInput.oninput = () => {
+      pinInput.value = pinInput.value.replace(/[^0-9]/g, '');
+      if (pinInput.value.length === 4) {
+        btnSend.removeAttribute('disabled');
+        btnSend.className = 'py-3 px-4 bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all hover:bg-white active:scale-95 cursor-pointer opacity-100 h-12';
       } else {
-        confirmBtn.setAttribute('disabled', 'true');
-        confirmBtn.className = 'w-full bg-[#F27D26] text-black font-black uppercase tracking-widest py-4 rounded-2xl text-xs transition-all opacity-40 cursor-not-allowed';
+        btnSend.setAttribute('disabled', 'true');
+        btnSend.className = 'py-3 px-4 bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all h-12 opacity-40 cursor-not-allowed';
       }
-    }
-
-    modalContainer.querySelectorAll('.keypad-btn').forEach(element => {
-      const btn = element as HTMLButtonElement;
-      btn.onclick = (e) => {
-        const key = btn.getAttribute('data-key')!;
-        if (key === 'CLEAR') {
-          enteredPin = '';
-        } else if (key === 'DELETE') {
-          enteredPin = enteredPin.slice(0, -1);
-        } else {
-          if (enteredPin.length < 4) {
-            enteredPin += key;
-          }
-        }
-        updatePinDisplay();
-      };
-    });
-
-    backBtn.onclick = () => {
-      modalContainer.innerHTML = renderFormMarkup();
-      initFormHandlers();
     };
 
-    confirmBtn.onclick = () => {
-      confirmBtn.setAttribute('disabled', 'true');
-      confirmBtn.style.opacity = '0.5';
-      confirmBtn.innerHTML = `
-        <svg class="animate-spin h-4 w-4 text-black mr-2 inline-block" fill="none" viewBox="0 0 24 24">
+    // Keep focus inside input
+    pinInput.onblur = () => {
+      if (document.getElementById('paystack-ussd-command-overlay') && pinInput) {
+        pinInput.focus();
+      }
+    };
+
+    // Submit handler
+    const performUssdSend = () => {
+      if (pinInput.value.length !== 4) return;
+      
+      btnSend.setAttribute('disabled', 'true');
+      btnSend.style.opacity = '0.5';
+      btnSend.innerHTML = `
+        <svg class="animate-spin h-3.5 w-3.5 text-black mr-1 inline-block" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        CONNECTING GATEWAY...
+        SENDING...
       `;
 
       setTimeout(() => {
-        confirmBtn.innerHTML = `
-          <svg class="animate-spin h-4 w-4 text-black mr-2 inline-block" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
-          TRANSMITTING FUNDS...
-        `;
+        btnSend.innerHTML = 'APPROVED';
+        btnSend.className = 'py-3 px-4 bg-green-500 text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all h-12';
+        
         setTimeout(() => {
-          confirmBtn.innerHTML = `✓ TRANSACTION SIGNED SECURELY`;
-          confirmBtn.className = 'w-full bg-green-500 text-black font-black uppercase tracking-widest py-4 rounded-2xl text-xs transition-all opacity-100';
+          // Remove USSD overlay
+          ussdOverlay.remove();
+          
+          // Show complete transaction in Paystack container
+          modalContainer.innerHTML = `
+            <div class="space-y-6 text-center py-6" style="animation: modalEnter 0.2s ease-out;">
+              <div class="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-500 mx-auto">
+                <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              </div>
+              <div class="space-y-1">
+                <h3 class="text-xs font-black uppercase tracking-[0.2em] text-green-500">TRANSACTION SIGNED</h3>
+                <p class="text-[9px] uppercase font-mono text-white/40">Secure funds Ledger response verified</p>
+              </div>
+              <p class="text-[10px] text-white/60 leading-relaxed max-w-xs mx-auto">
+                Your payment of <span class="text-white font-bold">${formattedAmount}</span> has been confirmed. Redirecting to receipt ledger...
+              </p>
+            </div>
+          `;
+
           setTimeout(() => {
             overlay.remove();
             const mockRef = 'KNGS_MOMO_PAY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
@@ -397,9 +429,24 @@ function renderSimulatedGateway(config: any) {
             } else if (config.onSuccess) {
               config.onSuccess(mockResponse);
             }
-          }, 800);
-        }, 1500);
+          }, 1200);
+
+        }, 800);
       }, 1500);
+    };
+
+    btnSend.onclick = performUssdSend;
+    
+    pinInput.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        performUssdSend();
+      }
+    };
+
+    btnCancel.onclick = () => {
+      ussdOverlay.remove();
+      modalContainer.innerHTML = renderFormMarkup();
+      initFormHandlers();
     };
   }
 

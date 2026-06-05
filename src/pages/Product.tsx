@@ -632,97 +632,139 @@ export function ProductPage() {
     
     const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
-    const handlePaymentSuccess = async (response: any) => {
-      toast.dismiss(loadingToast);
-      
-      // Audit and validate response to stop false-positive payments
-      const audit = await logPaystackCallback(
-        'Product BuyNow',
+    const metadata = {
+      custom_fields: [
         {
-          reference: genRef,
-          amount: deposit * quantity,
-          email: user?.email || 'customer@kingsclothing.brand'
+          display_name: "Product",
+          variable_name: "product",
+          value: product.name
         },
-        response
-      );
-
-      if (!audit.isValid) {
-        toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
-        setIsOrdering(false);
-        return;
-      }
-
-      const orderData = {
-        customerId: user?.uid,
-        customerName: user?.displayName,
-        customerEmail: user?.email,
-        items: [{
-          productId: product.id,
-          name: product.name,
-          gsm: selectedGsm,
-          color: selectedColor.name,
-          size: selectedSize,
-          price: price,
-          quantity: quantity
-        }],
-        totalAmount: price * quantity,
-        depositAmount: deposit * quantity,
-        discountApplied: (basePrice - price) * quantity,
-        appliedPromotionId: activePromotion?.id || null,
-        appliedCouponCode: appliedCoupon?.code || null,
-        status: 'pending',
-        paymentStatus: 'paid',
-        paystackReference: response.reference || response.id || genRef,
-        momoNumber: momoNumber,
-        momoProvider: momoProvider,
-        referralAgentId: referralId || null,
-        createdAt: serverTimestamp()
-      };
-
-      try {
-        const orderRef = doc(collection(db, 'orders'));
-        const orderId = orderRef.id;
-
-        await runTransaction(db, async (transaction) => {
-          transaction.set(orderRef, orderData);
-          transaction.update(doc(db, 'products', product.id), {
-            salesCount: increment(quantity)
-          });
-          if (appliedCoupon) {
-            transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-              usageCount: increment(1)
-            });
-          }
-
-          // Trigger notification for order status change (pending)
-          const notifRef = doc(collection(db, 'notifications'));
-          const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
-          transaction.set(notifRef, {
-            title: `Order Status: PENDING`,
-            message: notifMessage,
-            type: 'order',
-            userId: orderData.customerId || 'global',
-            orderId: orderId,
-            status: 'pending',
-            createdAt: serverTimestamp()
-          });
-        });
-
-        toast.dismiss(loadingToast);
-        toast.success('Capital Asset Secured');
-        navigate(`/order/${orderId}`);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, 'orders');
-      }
-    };
-
-    const handlePaymentClosed = () => {
-      setIsOrdering(false);
-      toast.dismiss(loadingToast);
-      toast.error('Transaction Terminated by User');
+        {
+          display_name: "Momo Number",
+          variable_name: "momo_number",
+          value: momoNumber
+        },
+        {
+          display_name: "Provider",
+          variable_name: "provider",
+          value: momoProvider
+        }
+      ]
     };
 
     try {
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || 'customer@kingsclothing.brand',
+          amount: Math.round(deposit * quantity * 100), // convert to subunits
+          reference: genRef,
+          metadata
+        })
+      });
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
+
+      const initData = await initRes.json();
+
+      const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'Product BuyNow',
+          {
+            reference: genRef,
+            amount: deposit * quantity,
+            email: user?.email || 'customer@kingsclothing.brand'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+          setIsOrdering(false);
+          return;
+        }
+
+        const orderData = {
+          customerId: user?.uid,
+          customerName: user?.displayName,
+          customerEmail: user?.email,
+          items: [{
+            productId: product.id,
+            name: product.name,
+            gsm: selectedGsm,
+            color: selectedColor.name,
+            size: selectedSize,
+            price: price,
+            quantity: quantity
+          }],
+          totalAmount: price * quantity,
+          depositAmount: deposit * quantity,
+          discountApplied: (basePrice - price) * quantity,
+          appliedPromotionId: activePromotion?.id || null,
+          appliedCouponCode: appliedCoupon?.code || null,
+          status: 'pending',
+          paymentStatus: 'paid',
+          paystackReference: response.reference || response.id || genRef,
+          momoNumber: momoNumber,
+          momoProvider: momoProvider,
+          referralAgentId: referralId || null,
+          createdAt: serverTimestamp()
+        };
+
+        try {
+          const orderRef = doc(collection(db, 'orders'));
+          const orderId = orderRef.id;
+
+          await runTransaction(db, async (transaction) => {
+            transaction.set(orderRef, orderData);
+            transaction.update(doc(db, 'products', product.id), {
+              salesCount: increment(quantity)
+            });
+            if (appliedCoupon) {
+              transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+                usageCount: increment(1)
+              });
+            }
+
+            // Trigger notification for order status change (pending)
+            const notifRef = doc(collection(db, 'notifications'));
+            const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+            transaction.set(notifRef, {
+              title: `Order Status: PENDING`,
+              message: notifMessage,
+              type: 'order',
+              userId: orderData.customerId || 'global',
+              orderId: orderId,
+              status: 'pending',
+              createdAt: serverTimestamp()
+            });
+          });
+
+          toast.dismiss(loadingToast);
+          toast.success('Capital Asset Secured');
+          navigate(`/order/${orderId}`);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, 'orders');
+        }
+      };
+
+      const handlePaymentClosed = () => {
+        setIsOrdering(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
+
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+
       const config = {
         key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
         email: user?.email || 'customer@kingsclothing.brand',
@@ -731,32 +773,68 @@ export function ProductPage() {
         channels: ['mobile_money', 'card'],
         ref: genRef,
         reference: genRef,
-        metadata: {
-          custom_fields: [
-            {
-              display_name: "Product",
-              variable_name: "product",
-              value: product.name
-            },
-            {
-              display_name: "Momo Number",
-              variable_name: "momo_number",
-              value: momoNumber
-            },
-            {
-              display_name: "Provider",
-              variable_name: "provider",
-              value: momoProvider
+        access_code: initData.data?.access_code || undefined,
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
             }
-          ]
+          }
         },
-        callback: handlePaymentSuccess,
-        onSuccess: handlePaymentSuccess,
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
         onClose: handlePaymentClosed,
         onCancel: handlePaymentClosed
       };
 
-      initPaystackMock();
+      if (isSimulation) {
+        initPaystackMock();
+      }
+      
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
       toast.dismiss(loadingToast);
