@@ -22,14 +22,22 @@ service cloud.firestore {
     function isValidId(id) { return id is string && id.size() <= 128; }
     function isVerifiedUser() { return isSignedIn(); } // Simplified to prevent email-provider sync check issues during dev/sandbox testing
 
+    function isReferrer(referrerId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/agents/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/agents/$(request.auth.uid)).data.get('referredBy', null) == referrerId;
+    }
+
     // --- Validation Blueprints ---
 
     function isValidAgent(data) {
-      return (data.get('uid', '') == request.auth.uid || isAdmin())
+      return (data.get('uid', '') == request.auth.uid || isAdmin() || isReferrer(data.get('uid', '')))
         && data.get('email', '') is string && data.get('email', '').size() <= 200
         && data.get('role', 'agent') in ["user", "agent", "admin"]
         && (data.get('name', '') is string && data.get('name', '').size() <= 100)
         && (data.get('referredBy', null) == null || data.get('referredBy', null) is string)
+        && (data.get('loyaltyPoints', 0) is number)
+        && (data.get('rewardsClaimed', []) is list)
         && (data.keys().hasAll(['uid', 'email', 'role', 'createdAt']));
     }
 
@@ -102,12 +110,13 @@ service cloud.firestore {
       allow get: if isSignedIn();
       allow list: if isAdmin() || resource.data.referredBy == request.auth.uid;
       allow create: if isSignedIn() && isValidId(agentId) && isValidAgent(incoming()) && incoming().createdAt == request.time && incoming().role != "admin";
-      allow update: if (isOwner(agentId) || isAdmin())
+      allow update: if (isOwner(agentId) || isAdmin() || isReferrer(agentId))
         && isValidAgent(incoming())
         && incoming().createdAt == existing().createdAt
         && (
-          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'stats'])) ||
-          (isOwner(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'stats', 'referralCode', 'momoNumber', 'momoProvider', 'updatedAt']))
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'stats', 'loyaltyPoints', 'rewardsClaimed'])) ||
+          (isOwner(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'stats', 'referralCode', 'momoNumber', 'momoProvider', 'updatedAt', 'loyaltyPoints', 'rewardsClaimed'])) ||
+          (isReferrer(agentId) && incoming().diff(existing()).affectedKeys().hasOnly(['stats']))
         );
     }
 

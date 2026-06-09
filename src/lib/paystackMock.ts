@@ -13,20 +13,27 @@ export function initPaystackMock() {
                          hostname.includes('webcontainer-api') ||
                          hostname.includes('aistudio');
 
-  // Activate simulation if:
-  // 1. Key is undefined or placeholder
-  // 2. We're on development / staging run.app sandbox and the key is not a live production key (starts with pk_live)
-  // This guarantees seamless UX and mock orders generation without real card credentials or domain origin errors.
-  const isHardcodedLiveKey = rawKey === 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
-  const isMockKey = !rawKey || 
-                    rawKey === 'your_paystack_public_key' || 
-                    (!rawKey.startsWith('pk_live') && isDevOrPreview) ||
-                    !rawKey.startsWith('pk_') ||
-                    (isHardcodedLiveKey && isDevOrPreview);
+  // Capture existing global PaystackPop if already loaded by the script tag
+  let realPaystackPop = (window as any)._realPaystackPop || (window as any).PaystackPop;
+  if (realPaystackPop && realPaystackPop._isMock) {
+    realPaystackPop = (window as any)._realPaystackPop;
+  }
 
   const mockImplementation = {
+    _isMock: true,
     setup: (config: any) => {
-      console.log("Paystack local simulation initialized with config:", config);
+      // Dynamic routing: determine if sandbox scenario or real checkout
+      const isSimulation = config.mode === 'simulation' || 
+                           !config.access_code || 
+                           (typeof config.access_code === 'string' && config.access_code.startsWith('sim_access_code_'));
+
+      if (!isSimulation && realPaystackPop) {
+        console.log("[Kings Secure Payment Router] Real transaction detected. Routing to official Paystack gateway.");
+         // In real mode, use official Paystack Pop library
+        return realPaystackPop.setup(config);
+      }
+
+      console.log("[Kings Secure Payment Router] Simulation/mock transaction. Routing to local high-fidelity gateway.");
       return {
         openIframe: () => {
           renderSimulatedGateway(config);
@@ -35,22 +42,23 @@ export function initPaystackMock() {
     }
   };
 
-  if (isMockKey) {
-    try {
-      // Define intercepting get/set on window to withstand secondary script injection/override
-      Object.defineProperty(window, 'PaystackPop', {
-        get: () => mockImplementation,
-        set: (val) => {
-          console.log("Kings Neural Forge: Prevented real PaystackPop override to safeguard sandbox simulation.");
-        },
-        configurable: true
-      });
-      console.log("Kings Neural Forge: Securely locked simulated PaystackPop gateway.");
-    } catch (e) {
-      (window as any).PaystackPop = mockImplementation;
-    }
-  } else {
-    // If we have a valid key, only act as fallback if library fails to load
+  try {
+    // Intercept window.PaystackPop using a dynamic getter/setter so we can coexist perfectly with the real CDN script.
+    // When the script loads, it assigns window.PaystackPop. When it does, we save the real instance.
+    Object.defineProperty(window, 'PaystackPop', {
+      get: () => mockImplementation,
+      set: (val) => {
+        if (val && !val._isMock) {
+          console.log("[Kings Secure Payment Router] Captured real PaystackPop instance assigned by CDN script.");
+          realPaystackPop = val;
+          (window as any)._realPaystackPop = val;
+        }
+      },
+      configurable: true
+    });
+    console.log("[Kings Secure Payment Router] Dynamic Routing Engine initialized successfully.");
+  } catch (e) {
+    console.error("[Kings Secure Payment Router] Redefinition failure:", e);
     if (!(window as any).PaystackPop) {
       (window as any).PaystackPop = mockImplementation;
     }
