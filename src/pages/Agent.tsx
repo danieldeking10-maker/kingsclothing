@@ -48,6 +48,7 @@ import { GSM } from '../types';
 import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
+import { LoyaltyTerminal } from '../components/LoyaltyTerminal';
 import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
 import { DesignMetadataModal } from '../components/DesignMetadataModal';
 import { ImageCropModal } from '../components/ImageCropModal';
@@ -1308,8 +1309,10 @@ export function AgentPortal() {
           
           // 1. Pending -> Processing (Confirmed)
           if (oldStatus === 'pending' && newStatus === 'processing') {
+            const crownsEarned = Math.floor(orderData.totalAmount * 10);
             transaction.update(agentRef, {
-              'stats.totalSales': increment(orderData.totalAmount)
+              'stats.totalSales': increment(orderData.totalAmount),
+              loyaltyPoints: increment(crownsEarned)
             });
             
             // Credit Referrer
@@ -1332,8 +1335,10 @@ export function AgentPortal() {
               });
             });
 
+            const crownsDeducted = Math.floor(orderData.totalAmount * 10);
             transaction.update(agentRef, {
-              'stats.totalSales': increment(-orderData.totalAmount)
+              'stats.totalSales': increment(-orderData.totalAmount),
+              loyaltyPoints: increment(-crownsDeducted)
             });
             
             // Reverse Referrer Commission
@@ -1841,6 +1846,9 @@ export function AgentPortal() {
             </motion.div>
           ))}
         </section>
+
+        {/* Loyalty Point System Terminal */}
+        <LoyaltyTerminal user={user} agentProfile={agentProfile} />
 
         {/* Performance Intelligence - Visual Analytics */}
         <section className="space-y-12">

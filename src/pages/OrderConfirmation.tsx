@@ -301,8 +301,10 @@ export function OrderConfirmationPage() {
         // 2. Update Agent Profile Stats (The person who made the purchase)
         if (agentRef && agentSnap && agentSnap.exists()) {
           const agentData = agentSnap.data();
+          const crownsEarned = Math.floor(orderData.totalAmount * 10);
           transaction.update(agentRef, {
             'stats.totalSales': increment(orderData.totalAmount),
+            loyaltyPoints: increment(crownsEarned)
           });
 
           // 3. Credit Referrer if applicable (10% commission on total sales)
