@@ -12,6 +12,8 @@ import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { initPaystackMock } from '../lib/paystackMock';
 import { logPaystackCallback } from '../lib/paystackLogger';
 
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
+
 interface CartDrawerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -22,13 +24,11 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [isOrdering, setIsOrdering] = React.useState(false);
-  const [step, setStep] = React.useState<'cart' | 'details' | 'payment'>('cart');
+  const [step, setStep] = React.useState<'cart' | 'details'>('cart');
   const [guestName, setGuestName] = React.useState('');
   const [guestEmail, setGuestEmail] = React.useState('');
   const [guestNameError, setGuestNameError] = React.useState('');
   const [guestEmailError, setGuestEmailError] = React.useState('');
-  const [momoNumber, setMomoNumber] = React.useState('');
-  const [momoProvider, setMomoProvider] = React.useState<'mtn' | 'telecel' | 'airteltigo'>('mtn');
   const [couponCode, setCouponCode] = React.useState('');
   const [appliedCoupon, setAppliedCoupon] = React.useState<any>(null);
 
@@ -65,53 +65,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
     return totalPrice * (1 - (appliedCoupon.discountPercentage / 100));
   }, [totalPrice, appliedCoupon]);
 
-  const handleCheckout = async () => {
-    if (items.length === 0) return;
-
-    if (step === 'cart') {
-      if (user) {
-        setStep('payment');
-      } else {
-        setStep('details');
-      }
-      return;
-    }
-
-    if (step === 'details') {
-      let valid = true;
-      if (!guestName.trim()) {
-        setGuestNameError('Identity verification name is required');
-        valid = false;
-      } else {
-        setGuestNameError('');
-      }
-
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!guestEmail.trim()) {
-        setGuestEmailError('Protocol communication email is required');
-        valid = false;
-      } else if (!emailRegex.test(guestEmail)) {
-        setGuestEmailError('Secure protocol email format is invalid');
-        valid = false;
-      } else {
-        setGuestEmailError('');
-      }
-
-      if (!valid) {
-        toast.error('Identity Credentials Incomplete');
-        return;
-      }
-
-      setStep('payment');
-      return;
-    }
-
-    // Now on step 'payment'
-    if (!momoNumber || momoNumber.length < 10) {
-      toast.error('Invalid Protocol: Mobile Money Number Required');
-      return;
-    }
-
+  const startPaystackPayment = async () => {
     setIsOrdering(true);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
@@ -133,16 +87,6 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             value: appliedCoupon?.code || "NONE"
           },
           {
-            display_name: "Momo Number",
-            variable_name: "momo_number",
-            value: momoNumber
-          },
-          {
-            display_name: "Provider",
-            variable_name: "provider",
-            value: momoProvider
-          },
-          {
             display_name: "Customer Identity",
             variable_name: "customer_identity",
             value: user ? `User: ${user.displayName}` : `Guest: ${guestName} (${guestEmail})`
@@ -155,7 +99,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user?.email || guestEmail || 'customer@kingsclothing.brand',
+          email: user?.email || guestEmail || 'customer@example.com',
           amount: Math.round(depositAmount * 100), // convert to subunits
           reference: genRef,
           metadata
@@ -178,7 +122,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
           {
             reference: genRef,
             amount: depositAmount,
-            email: user?.email || guestEmail || 'customer@kingsclothing.brand'
+            email: user?.email || guestEmail || 'customer@example.com'
           },
           response
         );
@@ -192,7 +136,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         const orderData = {
           customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
           customerName: user?.displayName || guestName || 'Guest Customer',
-          customerEmail: user?.email || guestEmail || 'guest@kingsclothing.brand',
+          customerEmail: user?.email || guestEmail || 'customer@example.com',
           isGuest: !user,
           items: items.map(item => ({
             productId: item.id,
@@ -210,8 +154,6 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
           status: 'pending',
           paymentStatus: 'paid',
           paystackReference: response.reference || response.id || genRef,
-          momoNumber: momoNumber,
-          momoProvider: momoProvider,
           referralAgentId: referralId || null,
           createdAt: serverTimestamp()
         };
@@ -271,14 +213,15 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       const isSimulation = initData.mode === 'simulation';
       
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
-        email: user?.email || guestEmail || 'customer@kingsclothing.brand',
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || guestEmail || 'customer@example.com',
         amount: Math.round(depositAmount * 100), // convert to pesewas
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
         ref: genRef,
         reference: genRef,
         access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
         metadata,
         callback: async (response: any) => {
           if (isSimulation) {
@@ -336,7 +279,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         onCancel: handlePaymentClosed
       };
 
-      if (isSimulation) {
+      if (isSimulation || !(window as any).PaystackPop) {
         initPaystackMock();
       }
       
@@ -348,6 +291,48 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
       toast.dismiss(loadingToast);
       toast.error('Terminal Error: ' + error.message);
       setIsOrdering(false);
+    }
+  };
+
+  const handleCheckout = async () => {
+    if (items.length === 0) return;
+
+    if (step === 'cart') {
+      if (user) {
+        await startPaystackPayment();
+      } else {
+        setStep('details');
+      }
+      return;
+    }
+
+    if (step === 'details') {
+      let valid = true;
+      if (!guestName.trim()) {
+        setGuestNameError('Identity verification name is required');
+        valid = false;
+      } else {
+        setGuestNameError('');
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!guestEmail.trim()) {
+        setGuestEmailError('Protocol communication email is required');
+        valid = false;
+      } else if (!emailRegex.test(guestEmail)) {
+        setGuestEmailError('Secure protocol email format is invalid');
+        valid = false;
+      } else {
+        setGuestEmailError('');
+      }
+
+      if (!valid) {
+        toast.error('Identity Credentials Incomplete');
+        return;
+      }
+
+      await startPaystackPayment();
+      return;
     }
   };
 
@@ -385,7 +370,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             </div>
 
             {/* Stepper Progress Bar */}
-            {items.length > 0 && (
+            {items.length > 0 && !user && (
               <div className="px-8 py-3 bg-black/20 border-b border-white/5 flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-white/30">
                 <button 
                   onClick={() => setStep('cart')}
@@ -397,19 +382,13 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                 </button>
                 <div className="h-px bg-white/10 flex-1 mx-3" />
                 <button 
-                  onClick={() => !user && step !== 'cart' && setStep('details')}
-                  disabled={!!user}
-                  className={cn("flex items-center space-x-1", step === 'details' ? "text-accent" : user ? "opacity-40" : "hover:text-white")}
-                  aria-label="Go to step 2: Identity (Guests)"
+                  onClick={() => step !== 'cart' && setStep('details')}
+                  className={cn("flex items-center space-x-1", step === 'details' ? "text-accent" : "hover:text-white")}
+                  aria-label="Go to step 2: Identity"
                 >
                   <span className="font-mono font-bold">02</span>
                   <span>Identity</span>
                 </button>
-                <div className="h-px bg-white/10 flex-1 mx-3" />
-                <div className={cn("flex items-center space-x-1", step === 'payment' && "text-accent")}>
-                  <span className="font-mono font-bold">03</span>
-                  <span>Payment</span>
-                </div>
               </div>
             )}
 
@@ -431,59 +410,59 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     ) : (
                       items.map((item) => (
                         <motion.div 
-                          layout
-                          key={item.cartId}
-                          className="flex items-start space-x-6 group"
+                           layout
+                           key={item.cartId}
+                           className="flex items-start space-x-6 group"
                         >
-                          <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
-                          </div>
-                          <div className="flex-1 space-y-2">
-                            <div className="flex justify-between items-start">
-                              <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
-                              <button 
-                                onClick={() => removeItem(item.cartId)}
-                                className="p-1 text-white/10 hover:text-red-500 transition-colors"
-                                aria-label={`Remove ${item.name} from cart`}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <div className="flex flex-col space-y-1">
-                              <div className="flex items-center space-x-2">
-                                <ShieldCheck className="w-3 h-3 text-accent" />
-                                <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
-                              </div>
-                              <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
-                                {item.color} • {item.size}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between pt-4">
-                              <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
-                                <button 
-                                  onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
-                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
-                                  aria-label="Decrease quantity"
-                                >
-                                  -
-                                </button>
-                                <span className="px-4 text-[11px] font-mono font-black" aria-live="polite">{item.quantity}</span>
-                                <button 
-                                  onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
-                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
-                                  aria-label="Increase quantity"
-                                >
-                                  +
-                                </button>
-                              </div>
-                              <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
-                            </div>
-                          </div>
+                           <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
+                             <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
+                           </div>
+                           <div className="flex-1 space-y-2">
+                             <div className="flex justify-between items-start">
+                               <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
+                               <button 
+                                 onClick={() => removeItem(item.cartId)}
+                                 className="p-1 text-white/10 hover:text-red-500 transition-colors"
+                                 aria-label={`Remove ${item.name} from cart`}
+                               >
+                                 <Trash2 className="w-3.5 h-3.5" />
+                               </button>
+                             </div>
+                             <div className="flex flex-col space-y-1">
+                               <div className="flex items-center space-x-2">
+                                 <ShieldCheck className="w-3 h-3 text-accent" />
+                                 <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
+                               </div>
+                               <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
+                                 {item.color} • {item.size}
+                               </p>
+                             </div>
+                             <div className="flex items-center justify-between pt-4">
+                               <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
+                                 <button 
+                                   onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
+                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                   aria-label="Decrease quantity"
+                                 >
+                                   -
+                                 </button>
+                                 <span className="px-4 text-[11px] font-mono font-black" aria-live="polite">{item.quantity}</span>
+                                 <button 
+                                   onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
+                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                   aria-label="Increase quantity"
+                                 >
+                                   +
+                                 </button>
+                               </div>
+                               <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
+                             </div>
+                           </div>
                         </motion.div>
                       ))
                     )}
                   </motion.div>
-                ) : step === 'details' ? (
+                ) : (
                   <motion.div
                     key="details-step"
                     initial={{ opacity: 0, x: 20 }}
@@ -567,95 +546,6 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                       </button>
                     </div>
                   </motion.div>
-                ) : (
-                  <motion.div
-                    key="payment-step"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    className="space-y-12"
-                  >
-                    <button 
-                      onClick={() => {
-                        if (user) {
-                          setStep('cart');
-                        } else {
-                          setStep('details');
-                        }
-                      }}
-                      className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
-                      aria-label="Go back to previous step"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                      <span>Back</span>
-                    </button>
-
-                    <div className="space-y-4">
-                      <div className="flex items-center space-x-3 mb-2">
-                        <ShieldCheck className="w-6 h-6 text-accent" />
-                        <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white leading-none">MoMo <br/> Injection</h3>
-                      </div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Deploy Secure Network Protocol</p>
-                    </div>
-
-                    <div className="space-y-10">
-                      <div className="space-y-4">
-                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4 block">Network Provider</label>
-                        <div className="grid grid-cols-3 gap-4">
-                          {[
-                            { id: 'mtn', label: 'MTN' },
-                            { id: 'telecel', label: 'Telecel' },
-                            { id: 'airteltigo', label: 'AT' }
-                          ].map((p) => (
-                            <button
-                              key={p.id}
-                              onClick={() => setMomoProvider(p.id as any)}
-                              className={cn(
-                                "relative py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest min-h-[44px]",
-                                momoProvider === p.id 
-                                  ? "border-accent bg-accent/10 text-white" 
-                                  : "border-white/5 bg-white/5 text-white/40 hover:border-white/10"
-                              )}
-                            >
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <label htmlFor="momo-number" className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4 block">MoMo Number</label>
-                        <div className="relative group">
-                          <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
-                          <input 
-                            id="momo-number"
-                            type="tel"
-                            placeholder="0XX XXX XXXX"
-                            value={momoNumber}
-                            onChange={(e) => setMomoNumber(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-14 text-sm font-black text-white outline-none focus:border-accent transition-all"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
-                      <div className="flex justify-between items-center pb-4 border-b border-white/5">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Kingdom Assets</span>
-                        <span className="text-[11px] font-black text-white">{items.length} Units</span>
-                      </div>
-                      {(!user && guestName) && (
-                        <div className="flex justify-between items-center pb-4 border-b border-white/5">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Authenticated Guest</span>
-                          <span className="text-[11px] font-black text-white">{guestName}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Payment</span>
-                        <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice)}</span>
-                      </div>
-                    </div>
-                  </motion.div>
                 )}
               </AnimatePresence>
             </div>
@@ -707,7 +597,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     <>
                       <Zap className="w-5 h-5" />
                       <span>
-                        {step === 'payment' ? 'Initialize Secure Build' : step === 'details' ? 'Confirm Credentials' : 'Authorize Production'}
+                        {step === 'details' ? 'Authorize Production' : user ? 'Authorize Production' : 'Confirm Credentials'}
                       </span>
                     </>
                   )}

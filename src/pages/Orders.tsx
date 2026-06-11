@@ -32,6 +32,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { toast } from 'react-hot-toast';
 import { GarmentPipelineTracker } from '../components/GarmentPipelineTracker';
+import { OrderTimeline } from '../components/OrderTimeline';
 
 const STEPS = [
   { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verification' },
@@ -50,6 +51,7 @@ export function OrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled'>('all');
+  const [expandedTimelineId, setExpandedTimelineId] = useState<string | null>(null);
 
   // Custom Tracking States
   const [searchId, setSearchId] = useState(trackIdParam);
@@ -455,7 +457,7 @@ export function OrdersPage() {
               </div>
 
               {/* Fabrication Pipeline & Status Progress Tracker */}
-              <GarmentPipelineTracker order={trackedOrder} />
+              <OrderTimeline order={trackedOrder} />
 
               {/* Order Manifest Details Grid */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
@@ -631,6 +633,17 @@ export function OrdersPage() {
                           
                           <div className="flex items-center space-x-2">
                             <button 
+                              onClick={() => setExpandedTimelineId(expandedTimelineId === order.id ? null : order.id)}
+                              className={cn(
+                                "px-4 py-2 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all",
+                                expandedTimelineId === order.id 
+                                  ? "bg-accent text-black font-black" 
+                                  : "bg-white/5 text-white hover:bg-accent hover:text-black"
+                              )}
+                            >
+                              {expandedTimelineId === order.id ? 'Hide Timeline' : 'Detailed Timeline'}
+                            </button>
+                            <button 
                               onClick={() => handleQuickTrack(order.id)}
                               className="px-4 py-2 bg-white/5 text-white hover:bg-accent hover:text-black rounded-xl text-[8px] font-black uppercase tracking-widest transition-all"
                             >
@@ -744,6 +757,12 @@ export function OrdersPage() {
                           </div>
                         )}
                       </div>
+
+                      {expandedTimelineId === order.id && (
+                        <div className="mt-6 pt-6 border-t border-white/5">
+                          <OrderTimeline order={order} />
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 ))}

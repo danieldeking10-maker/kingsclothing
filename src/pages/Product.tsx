@@ -45,6 +45,8 @@ import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
 import { initPaystackMock } from '../lib/paystackMock';
 import { logPaystackCallback } from '../lib/paystackLogger';
 
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
+
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
     <div className="max-w-7xl mx-auto">
@@ -658,7 +660,7 @@ export function ProductPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user?.email || 'customer@kingsclothing.brand',
+          email: user?.email || 'customer@example.com',
           amount: Math.round(deposit * quantity * 100), // convert to subunits
           reference: genRef,
           metadata
@@ -681,7 +683,7 @@ export function ProductPage() {
           {
             reference: genRef,
             amount: deposit * quantity,
-            email: user?.email || 'customer@kingsclothing.brand'
+            email: user?.email || 'customer@example.com'
           },
           response
         );
@@ -766,14 +768,15 @@ export function ProductPage() {
       const isSimulation = initData.mode === 'simulation';
 
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
-        email: user?.email || 'customer@kingsclothing.brand',
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || 'customer@example.com',
         amount: Math.round(deposit * quantity * 100), // convert to pesewas
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
         ref: genRef,
         reference: genRef,
         access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
         metadata,
         callback: async (response: any) => {
           if (isSimulation) {
@@ -831,7 +834,7 @@ export function ProductPage() {
         onCancel: handlePaymentClosed
       };
 
-      if (isSimulation) {
+      if (isSimulation || !(window as any).PaystackPop) {
         initPaystackMock();
       }
       

@@ -23,9 +23,11 @@ export function initPaystackMock() {
     _isMock: true,
     setup: (config: any) => {
       // Dynamic routing: determine if sandbox scenario or real checkout
-      const isSimulation = config.mode === 'simulation' || 
+      const isSimulation = isDevOrPreview ||
+                           config.mode === 'simulation' || 
                            !config.access_code || 
-                           (typeof config.access_code === 'string' && config.access_code.startsWith('sim_access_code_'));
+                           (typeof config.access_code === 'string' && config.access_code.startsWith('sim_access_code_')) ||
+                           config.key === 'pk_live_your_real_key_here';
 
       if (!isSimulation && realPaystackPop) {
         console.log("[Kings Secure Payment Router] Real transaction detected. Routing to official Paystack gateway.");
@@ -43,6 +45,11 @@ export function initPaystackMock() {
   };
 
   try {
+    // Attempt to delete existing first so descriptor update is guaranteed to succeed
+    try {
+      delete (window as any).PaystackPop;
+    } catch (_) {}
+    
     // Intercept window.PaystackPop using a dynamic getter/setter so we can coexist perfectly with the real CDN script.
     // When the script loads, it assigns window.PaystackPop. When it does, we save the real instance.
     Object.defineProperty(window, 'PaystackPop', {
@@ -54,14 +61,13 @@ export function initPaystackMock() {
           (window as any)._realPaystackPop = val;
         }
       },
-      configurable: true
+      configurable: true,
+      enumerable: true
     });
     console.log("[Kings Secure Payment Router] Dynamic Routing Engine initialized successfully.");
   } catch (e) {
-    console.error("[Kings Secure Payment Router] Redefinition failure:", e);
-    if (!(window as any).PaystackPop) {
-      (window as any).PaystackPop = mockImplementation;
-    }
+    console.warn("[Kings Secure Payment Router] Redefinition failure, falling back to direct assignment:", e);
+    (window as any).PaystackPop = mockImplementation;
   }
 }
 

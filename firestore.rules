@@ -52,7 +52,7 @@ service cloud.firestore {
       return data.totalAmount is number && data.totalAmount > 0
         && data.depositAmount is number && data.depositAmount >= 0
         && data.status in ["pending", "processing", "shipped", "delivered", "completed", "cancelled"]
-        && (data.get('customerId', null) == null || (data.get('customerId', null) is string && (data.get('customerId', null) == request.auth.uid || data.get('customerId', null).matches('^guest_'))) || isAdmin())
+        && (data.get('customerId', null) == null || (data.get('customerId', null) is string && ((isSignedIn() && data.get('customerId', null) == request.auth.uid) || data.get('customerId', null).matches('^guest_'))) || isAdmin())
         && (data.items is list && data.items.size() > 0);
     }
 
@@ -108,7 +108,7 @@ service cloud.firestore {
 
     match /agents/{agentId} {
       allow get: if isSignedIn();
-      allow list: if isAdmin() || resource.data.referredBy == request.auth.uid;
+      allow list: if isAdmin() || (isSignedIn() && resource.data.referredBy == request.auth.uid);
       allow create: if isSignedIn() && isValidId(agentId) && isValidAgent(incoming()) && incoming().createdAt == request.time && incoming().role != "admin";
       allow update: if (isOwner(agentId) || isAdmin() || isReferrer(agentId))
         && isValidAgent(incoming())
@@ -122,7 +122,7 @@ service cloud.firestore {
 
     match /products/{productId} {
       allow get: if true;
-      allow list: if resource.data.get('status', '') == "approved" || resource.data.get('agentId', '') == request.auth.uid || isAdmin();
+      allow list: if resource.data.get('status', '') == "approved" || (isSignedIn() && resource.data.get('agentId', '') == request.auth.uid) || isAdmin();
 
       match /reviews/{reviewId} {
         allow read: if true;
@@ -149,7 +149,7 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow get: if true; // Securely allow direct tracking lookup via cryptographic Order ID
-      allow list: if (resource.data.customerId == null || resource.data.customerId == request.auth.uid || resource.data.customerId.matches('^guest_') || resource.data.get('referralAgentId', null) == request.auth.uid || isAdmin());
+      allow list: if (resource.data.customerId == null || (isSignedIn() && resource.data.customerId == request.auth.uid) || resource.data.customerId.matches('^guest_') || (isSignedIn() && resource.data.get('referralAgentId', null) == request.auth.uid) || isAdmin());
       allow create: if isValidId(orderId) && isValidOrder(incoming()) && incoming().createdAt == request.time;
       allow update: if (isOwner(existing().customerId) || (existing().customerId != null && existing().customerId.matches('^guest_')) || isAdmin())
         && isValidOrder(incoming())
@@ -219,6 +219,11 @@ service cloud.firestore {
     match /newsletter_subscriptions/{subscriptionId} {
       allow read, update, delete: if isAdmin();
       allow create: if isValidId(subscriptionId) && isValidNewsletterSubscription(incoming());
+    }
+
+    match /paystack_audit_logs/{logId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isValidId(logId);
     }
 
     match /test/{docId} {

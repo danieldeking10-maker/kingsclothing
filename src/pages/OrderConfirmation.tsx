@@ -30,6 +30,8 @@ import { toast } from 'react-hot-toast';
 import { initPaystackMock } from '../lib/paystackMock';
 import { logPaystackCallback } from '../lib/paystackLogger';
 
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
+
 const STEPS = [
   { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verify' },
   { id: 'processing', label: 'Processing', icon: Zap, description: 'In production queue' },
@@ -48,7 +50,6 @@ export function OrderConfirmationPage() {
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [trackId, setTrackId] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'momo' | 'bank'>('momo');
 
   const handleTrack = (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,6 +83,7 @@ export function OrderConfirmationPage() {
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
     const orderIdRef = order?.id || 'KNGS_TRY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+    const transactionAttemptRef = `${orderIdRef}_PAY_${Date.now()}_` + Math.random().toString(36).substring(2, 6).toUpperCase();
 
     const metadata = {
       custom_fields: [
@@ -99,9 +101,9 @@ export function OrderConfirmationPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
+          email: user?.email || order?.customerEmail || 'customer@example.com',
           amount: Math.round((order?.depositAmount || 0) * 100), // convert to subunits
-          reference: orderIdRef,
+          reference: transactionAttemptRef,
           metadata
         })
       });
@@ -122,7 +124,7 @@ export function OrderConfirmationPage() {
           {
             reference: orderIdRef,
             amount: order?.depositAmount || 0,
-            email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand'
+            email: user?.email || order?.customerEmail || 'customer@example.com'
           },
           response
         );
@@ -138,7 +140,7 @@ export function OrderConfirmationPage() {
         if (id) {
            try {
               await updateDoc(doc(db, 'orders', id), {
-                paymentMethod: 'momo',
+                paymentMethod: 'paystack',
                 paystackReference: response.reference || response.id || 'N/A'
               });
            } catch (dbErr) {
@@ -158,14 +160,15 @@ export function OrderConfirmationPage() {
       const isSimulation = initData.mode === 'simulation';
 
       const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95',
-        email: user?.email || order?.customerEmail || 'customer@kingsclothing.brand',
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || order?.customerEmail || 'customer@example.com',
         amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
-        ref: orderIdRef,
-        reference: orderIdRef,
+        ref: transactionAttemptRef,
+        reference: transactionAttemptRef,
         access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
         metadata,
         callback: async (response: any) => {
           if (isSimulation) {
@@ -174,7 +177,7 @@ export function OrderConfirmationPage() {
             // Verify on backend server
             const verifyToast = toast.loading('Confirming transaction clearance on server...');
             try {
-              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || orderIdRef}`);
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || transactionAttemptRef}`);
               if (!verifyRes.ok) throw new Error('Payment verification rejected');
               const verifyData = await verifyRes.json();
               
@@ -200,7 +203,7 @@ export function OrderConfirmationPage() {
             // Verify on backend server
             const verifyToast = toast.loading('Confirming transaction clearance on server...');
             try {
-              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || orderIdRef}`);
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || transactionAttemptRef}`);
               if (!verifyRes.ok) throw new Error('Payment verification rejected');
               const verifyData = await verifyRes.json();
               
@@ -223,7 +226,7 @@ export function OrderConfirmationPage() {
         onCancel: handlePaymentClosed
       };
 
-      if (isSimulation) {
+      if (isSimulation || !(window as any).PaystackPop) {
         initPaystackMock();
       }
       
@@ -234,27 +237,6 @@ export function OrderConfirmationPage() {
       toast.dismiss(loadingToast);
       toast.error('Terminal Error: ' + error.message);
       setIsAlerting(false);
-    }
-  };
-
-  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
-
-  const handleMarkAsPaid = async () => {
-    if (!id || order.status !== 'pending') return;
-    
-    setIsSubmittingTransfer(true);
-    try {
-      await updateDoc(doc(db, 'orders', id), {
-        paymentMethod: 'bank',
-        paymentSubmitted: true,
-        paymentSubmittedAt: new Date().toISOString()
-      });
-      toast.success('Transfer Record Logged. Awaiting Verification.');
-    } catch (error) {
-      console.error('Submission Error:', error);
-      toast.error('Failed to log transfer record.');
-    } finally {
-      setIsSubmittingTransfer(false);
     }
   };
 
@@ -780,32 +762,9 @@ export function OrderConfirmationPage() {
                   </div>
                    <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-6">{order.status === 'cancelled' ? 'Blueprint Terminated' : 'Payment Alert Protocol'}</h3>
                    
-                   {order.status === 'pending' && (
-                     <div className="flex p-1 bg-white/5 rounded-2xl mb-6">
-                        <button 
-                          onClick={() => setPaymentMethod('momo')}
-                          className={cn(
-                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
-                            paymentMethod === 'momo' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
-                          )}
-                        >
-                           <Zap className="w-3 h-3" />
-                           <span>Mobile Money</span>
-                        </button>
-                        <button 
-                          onClick={() => setPaymentMethod('bank')}
-                          className={cn(
-                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
-                            paymentMethod === 'bank' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
-                          )}
-                        >
-                           <Landmark className="w-3 h-3" />
-                           <span>Bank Transfer</span>
-                        </button>
-                     </div>
-                   )}
 
-                   {order.status !== 'cancelled' && paymentMethod === 'momo' && (
+
+                   {order.status !== 'cancelled' && (
                      <div className="space-y-4 mb-8">
                         <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 flex flex-col items-center text-center space-y-4">
                            <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center text-accent animate-pulse">
@@ -843,7 +802,7 @@ export function OrderConfirmationPage() {
                      </div>
                    )}
 
-                   {order.status !== 'cancelled' && paymentMethod === 'bank' && (
+                   {false && (null /*
                      <div className="space-y-4 mb-8">
                         <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 space-y-6">
                            <div className="flex items-center space-x-3 text-accent transition-all">
@@ -894,11 +853,11 @@ export function OrderConfirmationPage() {
 
                         {order.status === 'pending' && !order.paymentSubmitted && (
                           <button 
-                            onClick={handleMarkAsPaid}
-                            disabled={isSubmittingTransfer}
+                            onClick={undefined}
+                            disabled={false}
                             className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white transition-all flex items-center justify-center space-x-3 shadow-lg shadow-accent/10"
                           >
-                            {isSubmittingTransfer ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                            {false ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                             <span>Confirm Transfer Submission</span>
                           </button>
                         )}
@@ -909,7 +868,7 @@ export function OrderConfirmationPage() {
                           </div>
                         )}
                      </div>
-                   )}
+                    */)}
 
                    {order.status === 'pending' && (
                      <div className="space-y-4">
@@ -931,10 +890,10 @@ export function OrderConfirmationPage() {
                             </div>
                             <div className="space-y-2">
                                <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
-                                 Method: <span className="text-white">{order.paymentMethod === 'bank' ? 'Bank Transfer' : 'Mobile Money'}</span>
+                                 Method: <span className="text-white">Paystack Gateway</span>
                                </p>
                                <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
-                                 Verify the {order.paymentMethod === 'bank' ? 'Account Ledger' : 'Paystack Ledger'} for <span className="text-accent">{formatGHC(order.depositAmount)}</span> before final authorization.
+                                 Verify the Paystack Ledger for <span className="text-accent">{formatGHC(order.depositAmount)}</span> before final authorization.
                                </p>
                             </div>
                             <button 
