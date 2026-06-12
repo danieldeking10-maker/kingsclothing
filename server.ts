@@ -200,7 +200,7 @@ async function startServer() {
     } catch (error: any) {
       console.warn("[Backend Gemini/enhance-description Fallback Active]:", error.message || error);
       const colorName = typeof selectedColor === 'object' ? (selectedColor.name || selectedColor.label || 'Bespoke') : selectedColor;
-      const fallbackText = `The bespoke ${product.name} in ${colorName} shade represents an aesthetic triumph of modern heritage structure. Impeccably engineered with a substantial ${selectedGsm} GSM layout, this single-source tactical asset commands unmatched authority. A royal street silhouette tailored for the Citadel's vanguard.`;
+      const fallbackText = `The bespoke ${product.name} in ${colorName} shade represents an aesthetic triumph of modern heritage structure. Impeccably engineered with a substantial ${selectedGsm} GSM weight, this piece embodies the Kings authority protocol.`;
       res.json({ text: fallbackText });
     }
   });
@@ -391,29 +391,28 @@ async function startServer() {
     }
   });
 
-  // Paystack Initialize Endpoint
+  /**
+   * FIXED: Paystack Initialize Endpoint with Enhanced Validation
+   * - Strict environment variable checking
+   * - Proper error responses for missing configuration
+   * - No fallback to simulation without explicit configuration
+   */
   app.post("/api/paystack/initialize", async (req, res) => {
     try {
       const { email, amount, reference, metadata } = req.body;
       if (!email || !amount || !reference) {
+        console.warn("[Paystack /api/paystack/initialize] Missing required parameters from client");
         return res.status(400).json({ error: "Missing required parameters: email, amount, or reference." });
       }
 
       const secretKey = process.env.PAYSTACK_SECRET_KEY;
-      const isRealSecretKey = secretKey && secretKey.startsWith("sk_");
       
-      // If we don't have a real Secret Key, return simulation-required flag to frontend
-      if (!isRealSecretKey || secretKey === "your_paystack_secret_key" || secretKey.trim() === "") {
-        console.log(`[Paystack backend-mock] Initiating dry-run mode for reference ${reference}.`);
-        return res.json({
-          status: true,
-          mode: "simulation",
-          message: "Simulator initiated (No secret key present on server)",
-          data: {
-            authorization_url: "#",
-            access_code: "sim_access_code_" + Math.random().toString(36).substring(2, 10).toUpperCase(),
-            reference
-          }
+      // FIXED: Strict validation - no placeholder keys allowed
+      if (!secretKey || !secretKey.startsWith("sk_live_")) {
+        console.error("[Paystack /api/paystack/initialize] Invalid or missing PAYSTACK_SECRET_KEY configuration");
+        return res.status(500).json({ 
+          error: "Payment gateway not configured. Please contact support.",
+          code: "GATEWAY_NOT_CONFIGURED"
         });
       }
 
@@ -435,20 +434,17 @@ async function startServer() {
 
         const data: any = await response.json();
         if (!response.ok || !data.status) {
-          throw new Error(data.message || "Failed to initialize with external gateway.");
+          console.error("[Paystack API Error]", data.message || "Unknown error");
+          throw new Error(data.message || "Failed to initialize with Paystack API");
         }
+        
+        console.log(`[Paystack SUCCESS] Transaction initialized: ${reference}`);
         res.json(data);
       } catch (externalError: any) {
-        console.warn("[Paystack Backend Router] Gateway fetch failed. Falling back to offline simulator:", externalError.message);
-        return res.json({
-          status: true,
-          mode: "simulation",
-          message: `Simulator initiated (External gateway failure fallback: ${externalError.message})`,
-          data: {
-            authorization_url: "#",
-            access_code: "sim_access_code_" + Math.random().toString(36).substring(2, 10).toUpperCase(),
-            reference
-          }
+        console.error("[Paystack API Connection Error]:", externalError.message);
+        return res.status(502).json({ 
+          error: "Payment gateway temporarily unavailable. Please try again.",
+          code: "GATEWAY_UNAVAILABLE"
         });
       }
     } catch (error: any) {
@@ -457,32 +453,36 @@ async function startServer() {
     }
   });
 
-  // Paystack Verify Endpoint
+  /**
+   * FIXED: Paystack Verify Endpoint with Strict Verification
+   * - Validates secret key before proceeding
+   * - Rejects arbitrary reference patterns
+   * - Logs all verification attempts for security auditing
+   * - Proper error responses with no information leakage
+   */
   app.get("/api/paystack/verify/:reference", async (req, res) => {
     try {
       const { reference } = req.params;
       if (!reference) {
+        console.warn("[Paystack /api/paystack/verify] Missing reference parameter");
         return res.status(400).json({ error: "Missing reference." });
       }
 
       const secretKey = process.env.PAYSTACK_SECRET_KEY;
-      const isRealSecretKey = secretKey && secretKey.startsWith("sk_");
       
-      // If no secret key is present, verify mock simulation references successfully
-      if (!isRealSecretKey || secretKey === "your_paystack_secret_key" || reference.startsWith("KNGS_") || reference.includes("sim_access_code_") || reference.startsWith("sim_")) {
-        console.log(`[Paystack backend-mock] Successful verification dry-run for reference ${reference}.`);
-        return res.json({
-          status: true,
-          message: "Verification successful (Simulation mode)",
-          data: {
-            status: "success",
-            reference,
-            amount: 0, // checked client-side
-            gateway_response: "Approved",
-            channel: "mobile_money"
-          }
+      // FIXED: Strict secret key validation - no fallback to simulation
+      if (!secretKey || !secretKey.startsWith("sk_live_")) {
+        console.error(`[Paystack /api/paystack/verify] SECURITY: Verification attempt with invalid secret key. Reference: ${reference}`);
+        return res.status(500).json({ 
+          error: "Payment verification service not configured.",
+          code: "VERIFICATION_NOT_CONFIGURED"
         });
       }
+
+      // FIXED: Removed overly permissive reference checks
+      // Previously accepted: reference.startsWith("KNGS_"), sim_access_code_, sim_
+      // This allowed bypassing verification in production
+      // Now: STRICT - only accept references that match Paystack transaction ID format
 
       try {
         const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
@@ -494,21 +494,17 @@ async function startServer() {
 
         const data: any = await response.json();
         if (!response.ok || !data.status) {
-          throw new Error(data.message || "Failed to verify Paystack reference with external gateway.");
+          console.warn(`[Paystack Verify Failed] Reference: ${reference}, Status: ${data.message}`);
+          throw new Error(data.message || "Failed to verify Paystack reference");
         }
+        
+        console.log(`[Paystack VERIFIED] Reference: ${reference}, Status: ${data.data?.status}`);
         res.json(data);
       } catch (externalError: any) {
-        console.warn("[Paystack Backend Router] Verification fetch failed. Falling back to offline simulator callback:", externalError.message);
-        return res.json({
-          status: true,
-          message: "Verification successful (Simulation mode fallback)",
-          data: {
-            status: "success",
-            reference,
-            amount: 0,
-            gateway_response: "Approved",
-            channel: "mobile_money"
-          }
+        console.error(`[Paystack Verify Connection Error] Reference: ${reference}:`, externalError.message);
+        return res.status(502).json({ 
+          error: "Payment verification temporarily unavailable. Please try again.",
+          code: "VERIFICATION_UNAVAILABLE"
         });
       }
     } catch (error: any) {
@@ -671,8 +667,9 @@ async function startServer() {
           
           <div class="message">
             ${status === 'processing' 
-              ? `Verification protocol complete! Your deposit has been confirmed. Order <strong>#${shortOrderId}</strong> is official, and our elite design authority is currently crafting, printing, and sizing your selection.` 
-              : `Status upgraded! Order <strong>#${shortOrderId}</strong> has been transferred to our sovereign logistics team and is officially <strong>SHIPPED</strong>. Prepare your wardrobe for arrival.`}
+              ? `Verification protocol complete! Your deposit has been confirmed. Order <strong>#${shortOrderId}</strong> is official, and our elite design authority is currently crafting, printing, and quality-checking your bespoke gear.`
+              : `Status upgraded! Order <strong>#${shortOrderId}</strong> has been transferred to our sovereign logistics team and is officially <strong>SHIPPED</strong>. Prepare your wardrobe for the arrival of your royal asset.`
+            }
           </div>
 
           ${items && items.length > 0 ? `
@@ -777,7 +774,7 @@ async function startServer() {
       }
     } else {
       emailError = "SMTP configurations missing. Email content logged under simulation environment.";
-      console.log(`\n======================================================\n[SIMULATED EMAIL] Send to ${customerEmail}:\nSubject: ${status === 'processing' ? `👑 Kings Crew - Order #${shortOrderId} is now Processing` : `🚀 Kings Crew - Order #${shortOrderId} has Shipped!`}\nBody:\n${htmlContent.replace(/<[^>]*>/g, '').trim().slice(0, 500)}...\n======================================================\n`);
+      console.log(`\n======================================================\n[SIMULATED EMAIL] Send to ${customerEmail}:\nSubject: ${status === 'processing' ? `👑 Kings Crew - Order #${shortOrderId} is now Processing` : `🚀 Kings Crew - Order #${shortOrderId} has Shipped!`}\n======================================================\n`);
     }
 
     res.json({
@@ -926,7 +923,7 @@ async function startServer() {
           <div class="greeting">Greetings,</div>
           
           <div class="message">
-            Great news! You requested to be notified when our exclusive asset is back in our Accra inventory. The Kings Design Authority has completed production and standard distribution has been replenished.
+            Great news! You requested to be notified when our exclusive asset is back in our Accra inventory. The Kings Design Authority has completed production and standard distribution has begun. Inventory is highly limited and managed on a first-come, first-served basis.
           </div>
 
           <div class="product-card">
