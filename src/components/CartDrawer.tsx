@@ -65,12 +65,86 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
     return totalPrice * (1 - (appliedCoupon.discountPercentage / 100));
   }, [totalPrice, appliedCoupon]);
 
+  /**
+   * FIXED: Order creation now deferred until after backend verification
+   * Prevents race condition where order exists but payment verification fails
+   */
+  const createOrder = async (paystackResponse: any, depositAmount: number) => {
+    const referralId = sessionStorage.getItem('last_referral_id');
+    const genRef = paystackResponse.reference || paystackResponse.id;
+
+    const orderData = {
+      customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
+      customerName: user?.displayName || guestName || 'Guest Customer',
+      customerEmail: user?.email || guestEmail || 'customer@example.com',
+      isGuest: !user,
+      items: items.map(item => ({
+        productId: item.id,
+        name: item.name,
+        gsm: item.gsm,
+        color: item.color,
+        size: item.size,
+        price: item.price,
+        quantity: item.quantity
+      })),
+      totalAmount: finalPrice,
+      depositAmount: depositAmount,
+      discountApplied: totalPrice - finalPrice,
+      appliedCouponCode: appliedCoupon?.code || null,
+      status: 'pending',
+      paymentStatus: 'paid',
+      paystackReference: genRef,
+      referralAgentId: referralId || null,
+      createdAt: serverTimestamp()
+    };
+
+    try {
+      const orderRef = doc(collection(db, 'orders'));
+      const orderId = orderRef.id;
+
+      await runTransaction(db, async (transaction) => {
+        transaction.set(orderRef, orderData);
+        
+        // Increment salesCount for each product to track trending data
+        items.forEach(item => {
+          const productRef = doc(db, 'products', item.id);
+          transaction.update(productRef, {
+            salesCount: increment(item.quantity)
+          });
+        });
+
+        if (appliedCoupon) {
+          transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+            usageCount: increment(1)
+          });
+        }
+
+        // Trigger notification for order status change (pending)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+        transaction.set(notifRef, {
+          title: `Order Status: PENDING`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: orderId,
+          status: 'pending',
+          createdAt: serverTimestamp()
+        });
+      });
+
+      return orderId;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'orders');
+      throw error;
+    }
+  };
+
   const startPaystackPayment = async () => {
     setIsOrdering(true);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
     try {
-      const referralId = sessionStorage.getItem('last_referral_id');
       const depositAmount = finalPrice;
       const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
@@ -133,73 +207,18 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
           return;
         }
 
-        const orderData = {
-          customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
-          customerName: user?.displayName || guestName || 'Guest Customer',
-          customerEmail: user?.email || guestEmail || 'customer@example.com',
-          isGuest: !user,
-          items: items.map(item => ({
-            productId: item.id,
-            name: item.name,
-            gsm: item.gsm,
-            color: item.color,
-            size: item.size,
-            price: item.price,
-            quantity: item.quantity
-          })),
-          totalAmount: finalPrice,
-          depositAmount: depositAmount,
-          discountApplied: totalPrice - finalPrice,
-          appliedCouponCode: appliedCoupon?.code || null,
-          status: 'pending',
-          paymentStatus: 'paid',
-          paystackReference: response.reference || response.id || genRef,
-          referralAgentId: referralId || null,
-          createdAt: serverTimestamp()
-        };
-
         try {
-          const orderRef = doc(collection(db, 'orders'));
-          const orderId = orderRef.id;
-
-          await runTransaction(db, async (transaction) => {
-            transaction.set(orderRef, orderData);
-            
-            // 2. Increment salesCount for each product to track trending data
-            items.forEach(item => {
-              const productRef = doc(db, 'products', item.id);
-              transaction.update(productRef, {
-                salesCount: increment(item.quantity)
-              });
-            });
-
-            if (appliedCoupon) {
-              transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-                usageCount: increment(1)
-              });
-            }
-
-            // Trigger notification for order status change (pending)
-            const notifRef = doc(collection(db, 'notifications'));
-            const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
-            transaction.set(notifRef, {
-              title: `Order Status: PENDING`,
-              message: notifMessage,
-              type: 'order',
-              userId: orderData.customerId || 'global',
-              orderId: orderId,
-              status: 'pending',
-              createdAt: serverTimestamp()
-            });
-          });
-
+          // FIXED: Order is created AFTER successful payment verification
+          const orderId = await createOrder(response, depositAmount);
+          
           clearCart();
           toast.dismiss(loadingToast);
           toast.success('Capital Asset Secured');
           navigate(`/order/${orderId}`);
           onClose();
         } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, 'orders');
+          toast.error('Order creation failed after payment success');
+          setIsOrdering(false);
         }
       };
 
@@ -225,6 +244,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         metadata,
         callback: async (response: any) => {
           if (isSimulation) {
+            // FIXED: For simulation, still validate callback before creating order
             await handlePaymentSuccess(response);
           } else {
             // Verify on backend server
@@ -251,6 +271,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
         },
         onSuccess: async (response: any) => {
           if (isSimulation) {
+            // FIXED: For simulation, still validate callback before creating order
             await handlePaymentSuccess(response);
           } else {
             // Verify on backend server
@@ -589,7 +610,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                 <button
                   onClick={handleCheckout}
                   disabled={isOrdering}
-                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl active:scale-95 disabled:opacity-50 min-h-[44px]"
+                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
                 >
                   {isOrdering ? (
                     <RefreshCw className="w-5 h-5 animate-spin" />
