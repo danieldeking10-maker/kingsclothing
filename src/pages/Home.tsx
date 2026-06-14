@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { collection, query, limit, getDocs, orderBy, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { formatGHC } from '@/src/lib/utils';
-import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, SUPPORT_INTERACTION_NUMBER, PRICING } from '@/src/constants';
 import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
 
@@ -34,25 +34,57 @@ export function HomePage() {
   useEffect(() => {
     const fetchTrending = async () => {
       try {
-        // Fetch products ordered by salesCount (denormalized field tracking orders)
-        const trendingSnap = await getDocs(query(
-          collection(db, 'products'),
-          where('status', '==', 'approved'),
-          orderBy('salesCount', 'desc'),
-          limit(4)
-        ));
+        let designs: any[] = [];
+        let trendingSnap;
 
-        let designs = trendingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Fetch products ordered by salesCount
+        try {
+          trendingSnap = await getDocs(query(
+            collection(db, 'products'),
+            where('status', '==', 'approved'),
+            orderBy('salesCount', 'desc'),
+            limit(4)
+          ));
+          designs = trendingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (indexError) {
+          console.warn('Trending products index fallback triggered:', indexError);
+          // Fallback to simpler index-free fetching + local sorting to prevent blockage
+          const baseSnap = await getDocs(query(
+            collection(db, 'products'),
+            where('status', '==', 'approved'),
+            limit(30)
+          ));
+          designs = baseSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+          designs.sort((a, b) => (b.salesCount || 0) - (a.salesCount || 0));
+          designs = designs.slice(0, 4);
+        }
 
         // If not enough trending, fill with newest approved
         if (designs.length < 2) {
-          const newestSnap = await getDocs(query(
-            collection(db, 'products'),
-            where('status', '==', 'approved'),
-            orderBy('createdAt', 'desc'),
-            limit(4)
-          ));
-          const newest = newestSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          let newest: any[] = [];
+          try {
+            const newestSnap = await getDocs(query(
+              collection(db, 'products'),
+              where('status', '==', 'approved'),
+              orderBy('createdAt', 'desc'),
+              limit(4)
+            ));
+            newest = newestSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (newestError) {
+            console.warn('Newest products index fallback triggered:', newestError);
+            const baseSnap = await getDocs(query(
+              collection(db, 'products'),
+              where('status', '==', 'approved'),
+              limit(30)
+            ));
+            newest = baseSnap.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+            newest.sort((a, b) => {
+              const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+              const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+              return timeB - timeA;
+            });
+            newest = newest.slice(0, 4);
+          }
           
           // Merge avoiding duplicates
           newest.forEach(p => {
@@ -139,12 +171,12 @@ export function HomePage() {
             </div>
             <div className="space-y-4">
               <div className="flex justify-between text-[11px] font-bold uppercase tracking-tight">
-                <span className="text-white/30 italic">Initial Deposit</span>
-                <span>50% Now</span>
+                <span className="text-white/30 italic">Payment Duty</span>
+                <span>100% Full Payment</span>
               </div>
               <div className="flex justify-between text-[11px] font-bold uppercase tracking-tight">
-                <span className="text-white/30 italic">Completion</span>
-                <span>50% on Delivery</span>
+                <span className="text-white/30 italic">Fulfilment</span>
+                <span>Secure Courier</span>
               </div>
               <div className="h-px bg-white/5 w-full"></div>
               <div className="text-[10px] text-accent font-black uppercase tracking-widest italic animate-pulse">

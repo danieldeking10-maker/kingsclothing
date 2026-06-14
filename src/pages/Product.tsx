@@ -25,10 +25,11 @@ import {
   Camera,
   Wind,
   Layers,
-  Edit3
+  Edit3,
+  Mail,
+  Bell
 } from 'lucide-react';
 import { doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, onSnapshot, query, orderBy, increment, arrayUnion, runTransaction, where, getDocs, limit } from 'firebase/firestore';
-import { GoogleGenAI } from '@google/genai';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
@@ -41,6 +42,10 @@ import { RecentlyViewed } from '../components/RecentlyViewed';
 import { useRecentlyViewed } from '../hooks/useRecentlyViewed';
 import { VeoVideoGenerator } from '../components/VeoVideoGenerator';
 import { EnhancedImage } from '@/src/components/ui/EnhancedImage';
+import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
+
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
 
 const ProductSkeleton = () => (
   <div className="bg-background min-h-screen py-16 md:py-24 px-4 sm:px-6 lg:px-8 animate-pulse">
@@ -108,6 +113,14 @@ export function ProductPage() {
   const { addProduct } = useRecentlyViewed();
   const [product, setProduct] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [subscriberEmail, setSubscriberEmail] = useState('');
+  const [isSubscribing, setIsSubscribing] = useState(false);
+
+  useEffect(() => {
+    if (user?.email) {
+      setSubscriberEmail(user.email);
+    }
+  }, [user]);
   const [imageLoading, setImageLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'blueprint' | 'studio' | 'mockup'>('mockup');
   const [selectedGsm, setSelectedGsm] = useState<GSM>('260');
@@ -122,6 +135,7 @@ export function ProductPage() {
   const [isVeoOpen, setIsVeoOpen] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancedDescription, setEnhancedDescription] = useState<string | null>(null);
+  const [isSpecsModalOpen, setIsSpecsModalOpen] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [promotions, setPromotions] = useState<any[]>([]);
   const [coupons, setCoupons] = useState<any[]>([]);
@@ -268,7 +282,6 @@ export function ProductPage() {
     if (!couponCode.trim()) return;
     
     try {
-      const { getDocs } = await import('firebase/firestore');
       const q = query(
         collection(db, 'coupons'), 
         where('code', '==', couponCode.toUpperCase()), 
@@ -364,10 +377,33 @@ export function ProductPage() {
     return product.mockupImage;
   }, [product, selectedColor, viewMode, selectedGsm]);
 
-  // Sync image loading indicator
+  const [prevActiveImage, setPrevActiveImage] = useState(activeImage);
+
+  if (activeImage !== prevActiveImage) {
+    setPrevActiveImage(activeImage);
+    const img = new Image();
+    img.src = activeImage;
+    setImageLoading(!img.complete);
+  }
+
+  // Sync image loading indicator with actual load events
   useEffect(() => {
-    setImageLoading(true);
-  }, [selectedColor, viewMode, selectedGsm, product]);
+    if (!activeImage) return;
+    const img = new Image();
+    img.src = activeImage;
+    if (img.complete) {
+      setImageLoading(false);
+      return;
+    }
+
+    img.onload = () => {
+      setImageLoading(false);
+    };
+
+    img.onerror = () => {
+      setImageLoading(false);
+    };
+  }, [activeImage]);
 
   const [showStickyCta, setShowStickyCta] = useState(false);
 
@@ -397,6 +433,89 @@ export function ProductPage() {
       category: product.category,
     });
     toast.success(`Success: ${product.name} (x${quantity}) locked into cart`);
+  };
+
+  const handleRestockSubscribe = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!product || !subscriberEmail) return;
+
+    setIsSubscribing(true);
+    const collectionPath = 'restock_subscriptions';
+
+    try {
+      await addDoc(collection(db, collectionPath), {
+        productId: product.id,
+        productName: product.name,
+        email: subscriberEmail.toLowerCase().trim(),
+        createdAt: serverTimestamp(),
+        notified: false
+      });
+      
+      toast.success(`Broadcasting restock alerts queued for ${subscriberEmail.toUpperCase()}`);
+      setSubscriberEmail('');
+    } catch (error: any) {
+      console.error('Subscription error:', error);
+      handleFirestoreError(error, OperationType.WRITE, collectionPath);
+    } finally {
+      setIsSubscribing(false);
+    }
+  };
+
+  const handleToggleStock = async () => {
+    if (!product || !id) return;
+    const path = `products/${id}`;
+    const newStockState = !product.outOfStock;
+    try {
+      // 1. Update stock in database
+      await updateDoc(doc(db, 'products', id), {
+        outOfStock: newStockState,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(newStockState ? 'Ledger: Product marked OUT OF STOCK' : 'Ledger: Product marked IN STOCK');
+
+      // 2. If transitioning back to "In Stock" (meaning we restocked), trigger the emails!
+      if (!newStockState) {
+        // Query subscriptions for this product that haven't been notified yet
+        const q = query(
+          collection(db, 'restock_subscriptions'),
+          where('productId', '==', id),
+          where('notified', '==', false)
+        );
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const emails = snapshot.docs.map(doc => doc.data().email);
+          
+          // Call nodemailer endpoint
+          const response = await fetch('/api/send-restock-emails', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              productId: id,
+              productName: product.name,
+              emails: emails
+            })
+          });
+
+          if (response.ok) {
+            // Update those subscriptions to notified: true
+            const batchPromises = snapshot.docs.map(d => 
+              updateDoc(doc(db, 'restock_subscriptions', d.id), {
+                notified: true,
+                notifiedAt: serverTimestamp()
+              })
+            );
+            await Promise.all(batchPromises);
+            toast.success(`Success: Sent notifications to ${emails.length} subscribers`);
+          } else {
+            console.error('Failed to dispatch alert emails');
+            toast.error('Alert dispatch experienced system latency');
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Stock modifier failure:', error);
+      handleFirestoreError(error, OperationType.UPDATE, path);
+    }
   };
 
   const handleShare = () => {
@@ -438,39 +557,31 @@ export function ProductPage() {
     setIsEnhancing(true);
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const prompt = `
-        You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
-        Your mission is to forge a unique, commanding product narrative for "${product.name}".
-        
-        Product Details:
-        - Category: ${product.category}
-        - Fabric Shade: ${selectedColor.name}
-        - Structural Sizing: ${selectedSize}
-        - Fabric Weight: ${selectedGsm} GSM
-        - Base Blueprint: ${product.description}
-        
-        Brand Guidelines:
-        - Theme: "Ghanaian Craftsmanship" (soul of Accra, precision of heritage) meets "Streetwear Authority" (unapologetic leadership).
-        - Vocabulary: Architectural, authoritative, evocative, rhythmic.
-        - Length: Exactly one punchy, high-impact paragraph (approx 40-60 words).
-        - Goal: Make the customer feel like they are commissioning a royal asset.
-        
-        Note: Specifically reference the color "${selectedColor.name}" and the "${selectedGsm} GSM" weight to make the narrative feel custom-forged for this specific selection.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
+      const response = await fetch('/api/gemini/enhance-description', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product: {
+            name: product.name,
+            category: product.category,
+            description: product.description
+          },
+          selectedColor,
+          selectedSize,
+          selectedGsm
+        })
       });
 
-      if (response.text) {
-        setEnhancedDescription(response.text.trim());
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.text) {
+        setEnhancedDescription(data.text);
         toast.success('Narrative Forged');
         
         // Authority Directive: Focus the viewport on the newly forged narrative
@@ -521,92 +632,215 @@ export function ProductPage() {
     setIsPaymentModalOpen(false);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
     
+    const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+
+    const metadata = {
+      custom_fields: [
+        {
+          display_name: "Product",
+          variable_name: "product",
+          value: product.name
+        },
+        {
+          display_name: "Momo Number",
+          variable_name: "momo_number",
+          value: momoNumber
+        },
+        {
+          display_name: "Provider",
+          variable_name: "provider",
+          value: momoProvider
+        }
+      ]
+    };
+
     try {
-      const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
-        email: user?.email || 'customer@kingsclothing.brand',
-        amount: Math.round(deposit * quantity * 100), // convert to pesewas
-        currency: 'GHS',
-        channels: ['mobile_money', 'card'],
-        metadata: {
-          custom_fields: [
-            {
-              display_name: "Product",
-              variable_name: "product",
-              value: product.name
-            },
-            {
-              display_name: "Momo Number",
-              variable_name: "momo_number",
-              value: momoNumber
-            },
-            {
-              display_name: "Provider",
-              variable_name: "provider",
-              value: momoProvider
-            }
-          ]
-        },
-        callback: async (response: any) => {
-          const orderData = {
-            customerId: user?.uid,
-            customerName: user?.displayName,
-            customerEmail: user?.email,
-            items: [{
-              productId: product.id,
-              name: product.name,
-              gsm: selectedGsm,
-              color: selectedColor.name,
-              size: selectedSize,
-              price: price,
-              quantity: quantity
-            }],
-            totalAmount: price * quantity,
-            depositAmount: deposit * quantity,
-            discountApplied: (basePrice - price) * quantity,
-            appliedPromotionId: activePromotion?.id || null,
-            appliedCouponCode: appliedCoupon?.code || null,
-            status: 'pending',
-            paymentStatus: 'paid',
-            paystackReference: response.reference,
-            momoNumber: momoNumber,
-            momoProvider: momoProvider,
-            referralAgentId: referralId || null,
-            createdAt: serverTimestamp()
-          };
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || 'customer@example.com',
+          amount: Math.round(deposit * quantity * 100), // convert to subunits
+          reference: genRef,
+          metadata
+        })
+      });
 
-          try {
-            const orderRef = doc(collection(db, 'orders'));
-            const orderId = orderRef.id;
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
 
-            await runTransaction(db, async (transaction) => {
-              transaction.set(orderRef, orderData);
-              transaction.update(doc(db, 'products', product.id), {
-                salesCount: increment(quantity)
-              });
-              if (appliedCoupon) {
-                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-                  usageCount: increment(1)
-                });
-              }
-            });
+      const initData = await initRes.json();
 
-            toast.dismiss(loadingToast);
-            toast.success('Capital Asset Secured');
-            navigate(`/order/${orderId}`);
-          } catch (error) {
-            handleFirestoreError(error, OperationType.CREATE, 'orders');
-          }
-        },
-        onClose: () => {
+      const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'Product BuyNow',
+          {
+            reference: genRef,
+            amount: deposit * quantity,
+            email: user?.email || 'customer@example.com'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
           setIsOrdering(false);
+          return;
+        }
+
+        const orderData = {
+          customerId: user?.uid,
+          customerName: user?.displayName,
+          customerEmail: user?.email,
+          items: [{
+            productId: product.id,
+            name: product.name,
+            gsm: selectedGsm,
+            color: selectedColor.name,
+            size: selectedSize,
+            price: price,
+            quantity: quantity
+          }],
+          totalAmount: price * quantity,
+          depositAmount: deposit * quantity,
+          discountApplied: (basePrice - price) * quantity,
+          appliedPromotionId: activePromotion?.id || null,
+          appliedCouponCode: appliedCoupon?.code || null,
+          status: 'pending',
+          paymentStatus: 'paid',
+          paystackReference: response.reference || response.id || genRef,
+          momoNumber: momoNumber,
+          momoProvider: momoProvider,
+          referralAgentId: referralId || null,
+          createdAt: serverTimestamp()
+        };
+
+        try {
+          const orderRef = doc(collection(db, 'orders'));
+          const orderId = orderRef.id;
+
+          await runTransaction(db, async (transaction) => {
+            transaction.set(orderRef, orderData);
+            transaction.update(doc(db, 'products', product.id), {
+              salesCount: increment(quantity)
+            });
+            if (appliedCoupon) {
+              transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+                usageCount: increment(1)
+              });
+            }
+
+            // Trigger notification for order status change (pending)
+            const notifRef = doc(collection(db, 'notifications'));
+            const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+            transaction.set(notifRef, {
+              title: `Order Status: PENDING`,
+              message: notifMessage,
+              type: 'order',
+              userId: orderData.customerId || 'global',
+              orderId: orderId,
+              status: 'pending',
+              createdAt: serverTimestamp()
+            });
+          });
+
           toast.dismiss(loadingToast);
-          toast.error('Transaction Terminated by User');
+          toast.success('Capital Asset Secured');
+          navigate(`/order/${orderId}`);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, 'orders');
         }
       };
 
+      const handlePaymentClosed = () => {
+        setIsOrdering(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
+
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+
+      const config = {
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || 'customer@example.com',
+        amount: Math.round(deposit * quantity * 100), // convert to pesewas
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        ref: genRef,
+        reference: genRef,
+        access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
+      };
+
+      if (isSimulation || !(window as any).PaystackPop) {
+        initPaystackMock();
+      }
+      
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
+      toast.dismiss(loadingToast);
       
     } catch (error: any) {
       toast.dismiss(loadingToast);
@@ -706,78 +940,64 @@ export function ProductPage() {
               }}
             >
               {imageLoading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-[#0F0F10] z-30 transition-all duration-700">
-                  <div className="relative">
+                <>
+                  {/* Slim Neon-Glow Progress Line at the top of the image frame */}
+                  <div className="absolute top-0 inset-x-0 h-1 bg-black/40 z-30 overflow-hidden">
                     <motion.div 
-                      animate={{ 
-                        rotate: 360,
-                        scale: [1, 1.1, 1],
-                      }}
-                      transition={{ 
-                        rotate: { duration: 2, repeat: Infinity, ease: "linear" },
-                        scale: { duration: 1.5, repeat: Infinity, ease: "easeInOut" }
-                      }}
-                      className="w-24 h-24 border-4 border-accent/10 border-t-accent rounded-full"
+                      style={{ position: 'absolute', top: 0, bottom: 0 }}
+                      initial={{ left: "-50%", width: "50%" }}
+                      animate={{ left: "100%" }}
+                      transition={{ duration: 1.2, ease: "easeInOut", repeat: Infinity }}
+                      className="bg-gradient-to-r from-transparent via-accent to-transparent"
                     />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <RefreshCw className="w-8 h-8 text-accent animate-spin" />
-                    </div>
                   </div>
-                  <div className="absolute bottom-12 left-1/2 -translate-x-1/2 text-center space-y-2">
-                     <p className="text-[10px] font-black uppercase tracking-[0.5em] text-accent animate-pulse">Syncing Asset</p>
-                     <p className="text-[7px] font-black uppercase tracking-widest text-white/20 italic">Resolving High-Def Blueprint</p>
+                  {/* Subtle HUD Badge in the bottom-middle of the image frame */}
+                  <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-full z-30 flex items-center space-x-2 shadow-2xl">
+                    <RefreshCw className="w-3 h-3 text-accent animate-spin" />
+                    <span className="text-[8px] font-black uppercase tracking-[0.2em] text-accent">Syncing Blueprint</span>
                   </div>
-                </div>
+                </>
               )}
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={viewMode + selectedColor.name}
-                  className="w-full h-full relative"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                >
-                  <EnhancedImage
-                    src={activeImage}
-                    onLoad={() => setImageLoading(false)}
-                    alt={product.name}
-                    className="w-full h-full object-cover"
-                    aspectRatio="aspect-auto"
-                    style={{
-                      transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
+              <div className="w-full h-full relative">
+                <EnhancedImage
+                  src={activeImage}
+                  onLoad={() => setImageLoading(false)}
+                  alt={product.name}
+                  className="w-full h-full object-cover"
+                  aspectRatio="aspect-auto"
+                  style={{
+                    transformOrigin: `${mousePos.x}% ${mousePos.y}%`,
+                  }}
+                  animate={{
+                    scale: isHovering ? 1.15 : 1,
+                    filter: isHovering ? 'brightness(1.05) contrast(1.05)' : 'brightness(0.9) contrast(1)',
+                  }}
+                  transition={{
+                    scale: { type: "spring", stiffness: 120, damping: 25 },
+                    filter: { duration: 0.3 }
+                  }}
+                />
+                
+                {/* Digital Fabric Dye Overlay */}
+                {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
+                  <motion.div 
+                    key={`overlay-${selectedColor.name}`}
+                    initial={{ opacity: 0 }}
+                    animate={{ 
+                      opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
+                      scale: isHovering ? 1.15 : 1
                     }}
-                    animate={{
-                      scale: 1,
-                      filter: isHovering ? 'brightness(1.1) contrast(1.1)' : 'brightness(0.9) contrast(1)',
+                    style={{ 
+                      backgroundColor: selectedColor.hex,
+                      transformOrigin: `${mousePos.x}% ${mousePos.y}%`
                     }}
                     transition={{
-                      scale: { type: "spring", stiffness: 100, damping: 20 },
-                      filter: { duration: 0.4 }
+                      scale: { type: "spring", stiffness: 120, damping: 25 }
                     }}
+                    className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
                   />
-                  
-                  {/* Digital Fabric Dye Overlay */}
-                  {!product.colorStudioImages?.[selectedColor.name] && !product.colorImages?.[selectedColor.name] && (
-                    <motion.div 
-                      key={`overlay-${selectedColor.name}`}
-                      initial={{ opacity: 0 }}
-                      animate={{ 
-                        opacity: selectedColor.name === 'Noir Black' ? 0.8 : 0.4,
-                        scale: 1
-                      }}
-                      style={{ 
-                        backgroundColor: selectedColor.hex,
-                        transformOrigin: `${mousePos.x}% ${mousePos.y}%`
-                      }}
-                      transition={{
-                        scale: { type: "spring", stiffness: 100, damping: 20 }
-                      }}
-                      className="absolute inset-0 pointer-events-none mix-blend-multiply transition-colors duration-700"
-                    />
-                  )}
-                </motion.div>
-              </AnimatePresence>
+                )}
+              </div>
 
 
               {/* View Mode Toggle - Architectural Style */}
@@ -971,9 +1191,17 @@ export function ProductPage() {
           {/* Right: Info & Config (Span 5) */}
           <div className="lg:col-span-5 flex flex-col pt-4">
             <div className="mb-12 relative">
-              <div className="flex items-center gap-4 mb-4">
+              <div className="flex items-center gap-4 mb-4 flex-wrap">
                 <span className="text-accent text-[10px] font-black uppercase tracking-editorial block">
-                    {product.category} Series
+                    {product.category} Series • {product.gender || 'unisex'}
+                </span>
+                <span className={cn(
+                  "text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-md",
+                  product.outOfStock 
+                    ? "bg-red-500/15 text-red-400 border border-red-500/20 animate-pulse" 
+                    : "bg-green-500/15 text-green-400 border border-green-500/20"
+                )}>
+                  {product.outOfStock ? '🔴 OUT OF STOCK' : '🟢 IN STOCK'}
                 </span>
                 {reviews.length > 0 && (
                   <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/10">
@@ -1158,23 +1386,35 @@ export function ProductPage() {
                   </div>
                   
                   {isBrandOwner && (
-                    <button 
-                      onClick={() => setIsPricingModalOpen(true)}
-                      className="absolute top-8 right-8 p-3 rounded-2xl bg-accent text-black hover:scale-110 transition-all shadow-xl flex items-center gap-2 group/edit"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                      <span className="text-[8px] font-black uppercase tracking-widest hidden group-hover/edit:block">Edit Price Logic</span>
-                    </button>
+                    <div className="absolute top-8 right-8 flex items-center gap-3">
+                      <button 
+                        onClick={handleToggleStock}
+                        className={cn(
+                          "p-3 rounded-2xl font-black uppercase tracking-widest text-[8px] transition-all flex items-center gap-2 shadow-xl hover:scale-110",
+                          product.outOfStock ? "bg-red-500 text-white" : "bg-white/5 border border-white/10 text-white/60 hover:text-white"
+                        )}
+                      >
+                        <Layers className="w-4 h-4" />
+                        <span>{product.outOfStock ? 'Mark In Stock' : 'Mark Out of Stock'}</span>
+                      </button>
+                      <button 
+                        onClick={() => setIsPricingModalOpen(true)}
+                        className="p-3 rounded-2xl bg-accent text-black hover:scale-110 transition-all shadow-xl flex items-center gap-2 group/edit"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                        <span className="text-[8px] font-black uppercase tracking-widest hidden group-hover/edit:block">Edit Price Logic</span>
+                      </button>
+                    </div>
                   )}
                   
                   <div className="grid grid-cols-2 gap-8 pt-8 border-t border-white/5">
                      <div className="space-y-1">
-                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Deposit (50%)</p>
+                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Full Payment</p>
                         <p className="text-2xl font-display font-black text-accent">{formatGHC(deposit)}</p>
                      </div>
                      <div className="space-y-1">
-                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Delivery (50%)</p>
-                        <p className="text-2xl font-display font-black text-white/60 tracking-tighter">{formatGHC(balance)}</p>
+                        <p className="text-[10px] uppercase font-black text-white/20 tracking-widest">Balance Due</p>
+                        <p className="text-2xl font-display font-black text-white/40 tracking-tighter">{formatGHC(balance)}</p>
                      </div>
                   </div>
                </div>
@@ -1302,7 +1542,13 @@ export function ProductPage() {
                 <div className="lg:min-w-[240px]">
                    <div className="flex justify-between items-center mb-6">
                       <label className="text-[10px] font-black uppercase tracking-editorial text-white/40">Structural Sizing</label>
-                      <button className="text-[8px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all italic">Blueprint Specs</button>
+                      <button 
+                        onClick={() => setIsSpecsModalOpen(true)}
+                        type="button"
+                        className="text-[8px] font-black uppercase tracking-widest text-accent hover:underline decoration-accent/20 transition-all italic text-left"
+                      >
+                        Blueprint Specs
+                      </button>
                    </div>
                    <div className="flex flex-wrap gap-3">
                       {SIZES.map(size => (
@@ -1346,42 +1592,83 @@ export function ProductPage() {
                   </button>
                </div>
 
-               <div className="flex items-center gap-4">
-                  <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
-                     <button 
-                        onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
-                     >
-                        <X className="w-4 h-4 rotate-45" />
-                     </button>
-                     <div className="flex-1 text-center">
-                        <span className="text-[14px] font-black font-mono text-white tracking-widest">{quantity.toString().padStart(2, '0')}</span>
-                        <p className="text-[7px] font-black uppercase text-white/20 tracking-widest leading-none mt-1">Units</p>
+                {product.outOfStock ? (
+                  <div className="space-y-4 p-8 bg-white/[0.01] border-2 border-dashed border-red-500/20 rounded-[2.5rem] relative overflow-hidden text-left">
+                     <div className="flex items-start gap-4 text-left">
+                        <div className="w-10 h-10 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-400 shrink-0">
+                           <Bell className="w-5 h-5 animate-pulse" />
+                        </div>
+                        <div className="text-left">
+                           <p className="text-[10px] font-black uppercase tracking-widest text-[#FF5A1F] mb-1 italic">Back-in-Stock Transmission</p>
+                           <h3 className="text-base font-display font-black text-white uppercase tracking-tight">Priority Re-supply Queue</h3>
+                           <p className="text-[10px] text-white/50 font-medium leading-relaxed uppercase tracking-tight mt-1">
+                              Sign up for automated dispatch updates. The design registry will transmit digital alerts immediately upon Accra workspace fabric replenishment.
+                           </p>
+                        </div>
+                     </div>
+                     <form onSubmit={handleRestockSubscribe} className="flex flex-col sm:flex-row gap-3 pt-2">
+                        <input 
+                           type="email"
+                           required
+                           value={subscriberEmail}
+                           onChange={(e) => setSubscriberEmail(e.target.value)}
+                           placeholder="ENTER MAIL CORRESPONDENCE ADDRESS"
+                           className="flex-1 bg-white/5 border border-white/15 rounded-full px-6 py-4 text-xs font-mono font-bold tracking-wider text-white placeholder-white/30 focus:outline-none focus:border-accent/40 uppercase"
+                        />
+                        <button
+                           type="submit"
+                           disabled={isSubscribing}
+                           className="bg-white text-black font-black uppercase text-[10px] tracking-widest px-8 py-5 h-[50px] rounded-full hover:bg-accent hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 shrink-0"
+                        >
+                           {isSubscribing ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                           ) : (
+                              <Mail className="w-3.5 h-3.5" />
+                           )}
+                           <span>Notify Me</span>
+                        </button>
+                     </form>
+                  </div>
+                ) : (
+                  <>
+                     <div className="flex items-center gap-4">
+                        <div className="flex items-center bg-white/5 border border-white/10 rounded-full p-2 h-[84px] w-48 shrink-0">
+                           <button 
+                              onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                              className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                           >
+                              <X className="w-4 h-4 rotate-45" />
+                           </button>
+                           <div className="flex-1 text-center">
+                              <span className="text-[14px] font-black font-mono text-white tracking-widest">{quantity.toString().padStart(2, '0')}</span>
+                              <p className="text-[7px] font-black uppercase text-white/20 tracking-widest leading-none mt-1">Units</p>
+                           </div>
+                           <button 
+                              onClick={() => setQuantity(quantity + 1)}
+                              className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                           >
+                              <X className="w-4 h-4" />
+                           </button>
+                        </div>
+                        <button 
+                          onClick={handleAddToCart}
+                          className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 h-[84px] rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
+                        >
+                           <ShoppingCart className="w-5 h-5 transition-transform group-hover:scale-110" />
+                           <span>Add to Cart</span>
+                        </button>
                      </div>
                      <button 
-                        onClick={() => setQuantity(quantity + 1)}
-                        className="w-12 h-12 flex items-center justify-center text-white/40 hover:text-white transition-colors"
+                       id="main-buy-button"
+                       onClick={handleBuyNow}
+                       disabled={isOrdering}
+                       className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
                      >
-                        <X className="w-4 h-4" />
+                        {isOrdering ? <RefreshCw className="animate-spin w-5 h-5" /> : <Zap className="w-5 h-5 transition-transform group-hover:scale-110 group-hover:rotate-12" />}
+                        <span>Initialize Build (Full Payment)</span>
                      </button>
-                  </div>
-                  <button 
-                    onClick={handleAddToCart}
-                    className="flex-1 bg-white/5 border border-white/10 text-white/60 py-7 h-[84px] rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-white/10 hover:text-white transition-all flex items-center justify-center space-x-3 group active:scale-95 shadow-xl"
-                  >
-                     <ShoppingCart className="w-5 h-5 transition-transform group-hover:scale-110" />
-                     <span>Add to Cart</span>
-                  </button>
-               </div>
-               <button 
-                 id="main-buy-button"
-                 onClick={handleBuyNow}
-                 disabled={isOrdering}
-                 className="w-full bg-white text-black py-7 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl disabled:opacity-50 group active:scale-95"
-               >
-                  {isOrdering ? <RefreshCw className="animate-spin w-5 h-5" /> : <Zap className="w-5 h-5 transition-transform group-hover:scale-110 group-hover:rotate-12" />}
-                  <span>Initialize Build (Deposit)</span>
-               </button>
+                  </>
+                )}
             </div>
 
             {/* Meta Info */}
@@ -1720,7 +2007,7 @@ export function ProductPage() {
 
                <div className="p-6 bg-accent/5 rounded-3xl border border-accent/10 mb-10">
                   <div className="flex justify-between items-center mb-2">
-                     <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Total Secured Deposit</span>
+                     <span className="text-[9px] font-black uppercase tracking-widest text-white/40">Total Secure Payment</span>
                      <span className="text-xl font-display font-black text-accent">{formatGHC(deposit * quantity)}</span>
                   </div>
                   <p className="text-[8px] font-black uppercase tracking-widest text-white/20 italic">Payload includes production logistics and fabric sourcing.</p>
@@ -1868,6 +2155,145 @@ export function ProductPage() {
                      </button>
                   </div>
                </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Blueprint Sizing & Fabric Specification Manual */}
+      <AnimatePresence>
+        {isSpecsModalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/85 backdrop-blur-xl flex items-center justify-center p-4 md:p-6 overflow-y-auto"
+            onClick={() => setIsSpecsModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 30 }}
+              className="glass p-8 md:p-12 rounded-[3rem] w-full max-w-4xl border border-white/10 relative my-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => setIsSpecsModalOpen(false)}
+                className="absolute top-8 right-8 text-white/30 hover:text-white transition-colors bg-white/5 p-3 rounded-full"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="mb-8 md:mb-12">
+                <span className="text-accent text-[10px] font-black uppercase tracking-[0.3em] mb-3 block">Legion Standard Manual</span>
+                <h3 className="text-4xl md:text-5xl font-display font-light italic text-white leading-none">
+                  Sizing & <span className="font-sans font-bold not-italic text-accent">Fabric Specifications.</span>
+                </h3>
+                <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mt-2">{product?.category || "T-Shirts"} Engineering Blueprint & Fit Matrix</p>
+              </div>
+
+              {/* Grid Content */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                {/* Specs Table */}
+                <div className="lg:col-span-7 space-y-6">
+                  <div className="flex items-center space-x-2">
+                    <Grid3X3 className="w-4 h-4 text-accent" />
+                    <h4 className="text-[11px] font-black uppercase tracking-editorial text-white/60">Garment Measurement Grid</h4>
+                  </div>
+                  <div className="overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02]">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-white/15 bg-white/5 text-[9px] font-black uppercase tracking-widest text-white/40">
+                          <th className="py-4 px-6">Size Metric</th>
+                          <th className="py-4 px-4 text-center">S</th>
+                          <th className="py-4 px-4 text-center">M</th>
+                          <th className="py-4 px-4 text-center">L</th>
+                          <th className="py-4 px-4 text-center">XL</th>
+                          <th className="py-4 px-4 text-center">XXL</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-[10px] font-mono divide-y divide-white/5 text-white/80">
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Chest (W)</td>
+                          <td className="py-4 px-4 text-center">52 cm</td>
+                          <td className="py-4 px-4 text-center">55 cm</td>
+                          <td className="py-4 px-4 text-center">58 cm</td>
+                          <td className="py-4 px-4 text-center">61 cm</td>
+                          <td className="py-4 px-4 text-center">64 cm</td>
+                        </tr>
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Length (L)</td>
+                          <td className="py-4 px-4 text-center">70 cm</td>
+                          <td className="py-4 px-4 text-center">72 cm</td>
+                          <td className="py-4 px-4 text-center">74 cm</td>
+                          <td className="py-4 px-4 text-center">76 cm</td>
+                          <td className="py-4 px-4 text-center">78 cm</td>
+                        </tr>
+                        <tr className="hover:bg-white/5 transition-colors">
+                          <td className="py-4 px-6 font-sans font-black uppercase text-white tracking-widest text-[9px]">Sleeve (S)</td>
+                          <td className="py-4 px-4 text-center">21 cm</td>
+                          <td className="py-4 px-4 text-center">22 cm</td>
+                          <td className="py-4 px-4 text-center">23 cm</td>
+                          <td className="py-4 px-4 text-center">24 cm</td>
+                          <td className="py-4 px-4 text-center">25 cm</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-[8px] text-white/30 uppercase font-black tracking-widest italic pl-2">
+                    * Fits slightly oversized for premium streetwear draping. Pick your regular size for standard boxy fit, or size down for tailored fit.
+                  </p>
+                </div>
+
+                {/* Fabric Weight Specs */}
+                <div className="lg:col-span-5 space-y-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-accent" />
+                      <h4 className="text-[11px] font-black uppercase tracking-editorial text-white/60">GSM weight index</h4>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">230 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-white/10 text-white/60 px-2 py-0.5 rounded tracking-widest uppercase">PRECISION</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">Lightweight & breathable knit weave optimized structured efficiency under warm Accra skies.</p>
+                      </div>
+
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">260 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-accent/20 text-accent px-2 py-0.5 rounded tracking-widest uppercase">COMMAND</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">Premium heavyweight build providing structured posture drop, comfort, and standard command presence.</p>
+                      </div>
+
+                      <div className="bg-white/5 p-4 rounded-2xl border border-white/5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-black uppercase text-white">320 GSM Weight</span>
+                          <span className="text-[8px] font-black bg-white text-black px-2 py-0.5 rounded tracking-widest uppercase">ARMOR</span>
+                        </div>
+                        <p className="text-[9px] text-white/40 leading-relaxed uppercase">The signature Ultima heavy knit drape. Absolute density shielding, incredible texture depth and long-term frame retention.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Garment Care Manual */}
+                  <div className="bg-accent/5 rounded-[2rem] p-6 border border-accent/10 space-y-3">
+                    <div className="flex items-center space-x-2 text-accent">
+                      <ShieldCheck className="w-4 h-4" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">Garment Longevity Code</span>
+                    </div>
+                    <ul className="text-[9px] font-bold text-white/60 uppercase tracking-tight space-y-2 list-none pl-1">
+                      <li>• COLD WASH ONLY (Inside out)</li>
+                      <li>• AIR DRY (Never tumble dry premium drapes)</li>
+                      <li>• IRON STEAM ONLY (Avoid print designs directly)</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}

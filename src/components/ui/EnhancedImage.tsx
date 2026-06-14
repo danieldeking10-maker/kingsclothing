@@ -7,7 +7,20 @@ interface EnhancedImageProps extends HTMLMotionProps<"img"> {
 }
 
 export function EnhancedImage({ className, src, alt, aspectRatio = "aspect-[4/5]", ...props }: EnhancedImageProps) {
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [prevSrc, setPrevSrc] = useState(src);
+  const [isLoaded, setIsLoaded] = useState(() => {
+    if (!src) return false;
+    const img = new Image();
+    img.src = src;
+    return img.complete;
+  });
+
+  if (src !== prevSrc) {
+    setPrevSrc(src);
+    const img = new Image();
+    img.src = src;
+    setIsLoaded(img.complete);
+  }
 
   // Filter out internal motion props to merge with external ones
   const { 
@@ -17,6 +30,20 @@ export function EnhancedImage({ className, src, alt, aspectRatio = "aspect-[4/5]
     onLoad: extOnLoad,
     ...restProps 
   } = props;
+
+  // Merge external active animate properties with our default opacity & blur
+  const activeAnimate = isLoaded 
+    ? {
+        opacity: 1,
+        filter: 'blur(0px)',
+        scale: 1,
+        ...(typeof extAnimate === 'object' ? extAnimate : {}),
+      }
+    : {
+        opacity: 0,
+        filter: 'blur(20px)',
+        scale: 1.05,
+      };
 
   return (
     <div className={cn("relative overflow-hidden bg-white/5", aspectRatio, className)}>
@@ -34,8 +61,8 @@ export function EnhancedImage({ className, src, alt, aspectRatio = "aspect-[4/5]
         src={src}
         alt={alt}
         initial={extInitial || { opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
-        animate={isLoaded ? (extAnimate || { opacity: 1, scale: 1, filter: 'blur(0px)' }) : { opacity: 0, scale: 1.05, filter: 'blur(20px)' }}
-        transition={extTransition || { duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+        animate={activeAnimate}
+        transition={extTransition || { duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
         onLoad={(e) => {
           setIsLoaded(true);
           if (extOnLoad) (extOnLoad as any)(e);

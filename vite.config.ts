@@ -11,9 +11,10 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       VitePWA({
+        strategies: 'generateSW',
         registerType: 'autoUpdate',
         injectRegister: 'auto',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+        includeAssets: ['logo.svg'],
         manifest: {
           name: 'KNGS Clothing | The Authority',
           short_name: 'KNGS',
@@ -29,12 +30,15 @@ export default defineConfig(({mode}) => {
               purpose: 'any maskable'
             }
           ]
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,svg}'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true
         }
       })
     ],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon } from 'lucide-react';
+import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon, Clock } from 'lucide-react';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { PRICING, GSM_OPTIONS, FABRIC_COLORS } from '@/src/constants';
 import { GSM } from '@/src/types';
@@ -9,8 +9,9 @@ import { generateProductTags } from '../services/geminiService';
 import { useCart } from '../lib/CartContext';
 import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, limit, onSnapshot } from 'firebase/firestore';
 import { EnhancedImage } from './ui/EnhancedImage';
+import { useProductPreloader } from '../hooks/useProductPreloader';
 
 interface ProductCardProps {
   product: any;
@@ -47,6 +48,15 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
   const [isSaving, setIsSaving] = React.useState(false);
   const [isQuickViewOpen, setIsQuickViewOpen] = React.useState(false);
 
+  const { getPreloadHandlers, attachIntersectionPreloader } = useProductPreloader();
+  const cardRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (cardRef.current) {
+      return attachIntersectionPreloader(cardRef.current, product);
+    }
+  }, [product, attachIntersectionPreloader]);
+
   React.useEffect(() => {
     setGsmPrices({
       '230': product.gsmPrices?.['230']?.toString() || '',
@@ -79,7 +89,90 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
   const [selectedGsm, setSelectedGsm] = React.useState<GSM>(gsmOptions[0] || '260');
 
-  const currentPrice = React.useMemo(() => getProductPrice(product, selectedGsm), [product, selectedGsm]);
+  // Active promotion state & real-time loader
+  const [activePromo, setActivePromo] = React.useState<any>(null);
+  const [timeRemaining, setTimeRemaining] = React.useState<string>('');
+
+  React.useEffect(() => {
+    const q = query(
+      collection(db, 'promotions'),
+      where('active', '==', true),
+      limit(1)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setActivePromo({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setActivePromo(null);
+      }
+    }, (err) => {
+      console.error("Failed to fetch active promotions in ProductCard:", err);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  React.useEffect(() => {
+    const formatCountdown = (ms: number): string => {
+      if (ms <= 0) return '00:00:00';
+      const totalSeconds = Math.floor(ms / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return [
+        hours.toString().padStart(2, '0'),
+        minutes.toString().padStart(2, '0'),
+        seconds.toString().padStart(2, '0')
+      ].join(':');
+    };
+
+    let targetDate: Date | null = null;
+    
+    if (product?.saleEndsAt) {
+      if (typeof product.saleEndsAt.toDate === 'function') {
+        targetDate = product.saleEndsAt.toDate();
+      } else {
+        targetDate = new Date(product.saleEndsAt);
+      }
+    } else if (activePromo?.endDate) {
+      if (typeof activePromo.endDate.toDate === 'function') {
+        targetDate = activePromo.endDate.toDate();
+      } else {
+        targetDate = new Date(activePromo.endDate);
+      }
+    } else if (product?.isOnSale || activePromo) {
+      // Midnight today fallback
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+      targetDate = endOfToday;
+    }
+
+    if (!targetDate) {
+      setTimeRemaining('');
+      return;
+    }
+
+    const updateTimer = () => {
+      const diff = targetDate!.getTime() - Date.now();
+      if (diff <= 0) {
+        setTimeRemaining('Expired');
+      } else {
+        setTimeRemaining(formatCountdown(diff));
+      }
+    };
+
+    updateTimer();
+    const intervalId = setInterval(updateTimer, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [product?.saleEndsAt, product?.isOnSale, activePromo]);
+
+  const currentPrice = React.useMemo(() => {
+    let price = getProductPrice(product, selectedGsm);
+    if (!product.isOnSale && activePromo) {
+      price = price * (1 - (activePromo.discountPercentage / 100));
+    }
+    return price;
+  }, [product, selectedGsm, activePromo]);
 
   const activeImage = React.useMemo(() => {
     const colorGsmKey = `${selectedColor.name}-${selectedGsm}`;
@@ -176,12 +269,17 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
   return (
     <motion.div
+      ref={cardRef}
       layout
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="group relative"
     >
-      <Link to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`} className="block space-y-6">
+      <Link 
+        to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`} 
+        className="block space-y-6"
+        {...getPreloadHandlers(product)}
+      >
         <div className="relative aspect-[4/5] overflow-hidden rounded-3xl bg-[#1A1A1B] group-hover:shadow-[0_0_50px_rgba(242,125,38,0.1)] transition-all duration-700">
           <div className="relative w-full h-full">
             <EnhancedImage 
@@ -206,13 +304,19 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
              <div className="px-3 py-1 flex items-center space-x-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-accent" />
                 <p className="text-[8px] font-black uppercase tracking-widest text-white">
-                  {product.category} Collection
+                  {product.category}{product.gender ? ` • ${product.gender}` : ' • unisex'}
                 </p>
                 {isNew && (
                   <span className="ml-2 bg-accent text-black text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">NEW</span>
                 )}
                 {product.isOnSale && (
                   <span className="ml-2 bg-red-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter animate-pulse">SALE</span>
+                )}
+                {!product.outOfStock && (product.salesCount || 0) >= 3 && (
+                  <span className="ml-2 bg-[#FF5A1F] text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter animate-pulse">LIMITED INVENTORY</span>
+                )}
+                {product.outOfStock && (
+                  <span className="ml-2 bg-red-600 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase tracking-tighter">OUT OF STOCK</span>
                 )}
              </div>
           </div>
@@ -227,13 +331,15 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
           )}
 
           <div className="absolute top-6 right-6 flex flex-col items-end gap-3 z-20">
-             <button 
-               onClick={handleQuickAdd}
-               className="w-10 h-10 rounded-full bg-accent text-black flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 duration-300"
-               title="Quick Add to Cart"
-             >
-                <Plus className="w-5 h-5 font-black" />
-             </button>
+             {!product.outOfStock && (
+               <button 
+                 onClick={handleQuickAdd}
+                 className="w-10 h-10 rounded-full bg-accent text-black flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 duration-300"
+                 title="Quick Add to Cart"
+               >
+                  <Plus className="w-5 h-5 font-black" />
+               </button>
+             )}
 
              <button 
                onClick={(e) => {
@@ -372,6 +478,12 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
             <p className="text-[7px] md:text-[9px] font-medium text-white/30 uppercase tracking-[0.3em] font-sans pt-1">
                EST. ACCRA • 2026
             </p>
+            {!product.outOfStock && (product.salesCount || 0) >= 3 && (
+              <p className="text-[7px] font-black uppercase tracking-widest text-[#FF5A1F] flex items-center gap-1 mt-1 animate-pulse">
+                <Clock className="w-2.5 h-2.5" />
+                <span>Secure blueprint: only {Math.max(1, 15 - (product.salesCount || 0))} left in registry</span>
+              </p>
+            )}
           </div>
             <div className="flex flex-col items-end">
               {gsmOptions.length > 1 && (
@@ -397,8 +509,17 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                 </div>
               )}
               <div className="flex items-center gap-2">
-                 <div className="flex flex-col items-end">
-                    {product.isOnSale && product.salePrice && (
+                 <motion.div 
+                   initial={{ opacity: 0, y: 20, scale: 1 }}
+                   animate={{ opacity: 1, y: 0 }}
+                   whileHover={{ scale: 1.05 }}
+                   transition={{
+                     default: { duration: 0.4, ease: "easeOut" },
+                     scale: { type: "spring", stiffness: 400, damping: 15 }
+                   }}
+                   className="product-price-container flex flex-col items-end cursor-pointer"
+                 >
+                    {((product.isOnSale && product.salePrice) || (!product.isOnSale && activePromo)) && (
                        <p className="text-[10px] font-mono font-bold text-white/20 line-through tracking-tighter">
                          {formatGHC(getProductPrice({ ...product, isOnSale: false }, selectedGsm))}
                        </p>
@@ -406,7 +527,13 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
                     <p className="text-accent font-mono font-black text-sm md:text-lg tracking-tighter">
                       {formatGHC(currentPrice)}
                     </p>
-                 </div>
+                 
+                     {timeRemaining && timeRemaining !== 'Expired' && (
+                        <span className="flex items-center gap-1 mt-1.5 bg-accent/20 border border-accent/40 px-2 py-0.5 rounded-full text-[8px] font-mono font-bold text-accent tracking-tighter animate-pulse select-none" title="Active promo campaign end countdown">
+                          <Clock className="w-2.5 h-2.5 text-accent animate-spin [animation-duration:8s]" />
+                          <span>{timeRemaining}</span>
+                        </span>
+                     )}</motion.div>
                  {isAdmin && onUpdatePrice && (
                     <div className="flex items-center gap-1">
                       <button 
@@ -663,13 +790,22 @@ export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, is
 
                 {/* Final Authorization */}
                 <div className="pt-8 border-t border-white/5 flex flex-col md:flex-row gap-4">
-                  <button
-                    onClick={handleQuickAdd}
-                    className="flex-[2] py-6 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-3xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-[0_20px_50px_rgba(242,125,38,0.2)] flex items-center justify-center space-x-3"
-                  >
-                    <Plus className="w-5 h-5" />
-                    <span>Authorize Acquisition</span>
-                  </button>
+                  {product.outOfStock ? (
+                    <Link
+                      to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`}
+                      className="flex-[2] py-6 bg-red-500/10 border border-red-500/20 text-red-500 font-black uppercase text-xs tracking-[0.2em] rounded-3xl hover:bg-red-500/20 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center space-x-2"
+                    >
+                      <span>Out Of Stock - Join Notify Queue</span>
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={handleQuickAdd}
+                      className="flex-[2] py-6 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-3xl hover:bg-white hover:scale-[1.02] active:scale-95 transition-all shadow-[0_20px_50px_rgba(242,125,38,0.2)] flex items-center justify-center space-x-3"
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span>Authorize Acquisition</span>
+                    </button>
+                  )}
                   <Link
                     to={`/product/${product.id}?gsm=${selectedGsm}&color=${selectedColor.name}`}
                     className="flex-1 py-6 bg-white/5 text-white font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-white/10 flex items-center justify-center border border-white/5"

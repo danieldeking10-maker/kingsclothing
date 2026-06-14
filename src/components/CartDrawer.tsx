@@ -5,10 +5,14 @@ import { useCart } from '../lib/CartContext';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTransaction } from 'firebase/firestore';
+import { doc, addDoc, collection, serverTimestamp, updateDoc, increment, runTransaction, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
+import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
+
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -20,16 +24,17 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [isOrdering, setIsOrdering] = React.useState(false);
-  const [isPaymentStep, setIsPaymentStep] = React.useState(false);
-  const [momoNumber, setMomoNumber] = React.useState('');
-  const [momoProvider, setMomoProvider] = React.useState<'mtn' | 'telecel' | 'airteltigo'>('mtn');
+  const [step, setStep] = React.useState<'cart' | 'details'>('cart');
+  const [guestName, setGuestName] = React.useState('');
+  const [guestEmail, setGuestEmail] = React.useState('');
+  const [guestNameError, setGuestNameError] = React.useState('');
+  const [guestEmailError, setGuestEmailError] = React.useState('');
   const [couponCode, setCouponCode] = React.useState('');
   const [appliedCoupon, setAppliedCoupon] = React.useState<any>(null);
 
   const handleApplyCoupon = async () => {
     if (!couponCode.trim()) return;
     try {
-      const { query, where, collection, getDocs } = await import('firebase/firestore');
       const q = query(
         collection(db, 'coupons'), 
         where('code', '==', couponCode.toUpperCase()), 
@@ -60,134 +65,295 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
     return totalPrice * (1 - (appliedCoupon.discountPercentage / 100));
   }, [totalPrice, appliedCoupon]);
 
-  const handleCheckout = async () => {
-    if (!user) {
-      toast.error('Identity Verification Required');
-      navigate('/auth?redirect=/shop');
-      onClose();
-      return;
-    }
+  /**
+   * FIXED: Order creation now deferred until after backend verification
+   * Prevents race condition where order exists but payment verification fails
+   */
+  const createOrder = async (paystackResponse: any, depositAmount: number) => {
+    const referralId = sessionStorage.getItem('last_referral_id');
+    const genRef = paystackResponse.reference || paystackResponse.id;
 
-    if (items.length === 0) return;
-    
-    if (!isPaymentStep) {
-      setIsPaymentStep(true);
-      return;
-    }
+    const orderData = {
+      customerId: user?.uid || 'guest_' + Math.random().toString(36).substring(2, 10),
+      customerName: user?.displayName || guestName || 'Guest Customer',
+      customerEmail: user?.email || guestEmail || 'customer@example.com',
+      isGuest: !user,
+      items: items.map(item => ({
+        productId: item.id,
+        name: item.name,
+        gsm: item.gsm,
+        color: item.color,
+        size: item.size,
+        price: item.price,
+        quantity: item.quantity
+      })),
+      totalAmount: finalPrice,
+      depositAmount: depositAmount,
+      discountApplied: totalPrice - finalPrice,
+      appliedCouponCode: appliedCoupon?.code || null,
+      status: 'pending',
+      paymentStatus: 'paid',
+      paystackReference: genRef,
+      referralAgentId: referralId || null,
+      createdAt: serverTimestamp()
+    };
 
-    if (!momoNumber || momoNumber.length < 10) {
-      toast.error('Invalid Protocol: Mobile Money Number Required');
-      return;
-    }
+    try {
+      const orderRef = doc(collection(db, 'orders'));
+      const orderId = orderRef.id;
 
+      await runTransaction(db, async (transaction) => {
+        transaction.set(orderRef, orderData);
+        
+        // Increment salesCount for each product to track trending data
+        items.forEach(item => {
+          const productRef = doc(db, 'products', item.id);
+          transaction.update(productRef, {
+            salesCount: increment(item.quantity)
+          });
+        });
+
+        if (appliedCoupon) {
+          transaction.update(doc(db, 'coupons', appliedCoupon.id), {
+            usageCount: increment(1)
+          });
+        }
+
+        // Trigger notification for order status change (pending)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Your order #${orderId.slice(0, 8)} has been logged and is awaiting confirmation.`;
+        transaction.set(notifRef, {
+          title: `Order Status: PENDING`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: orderId,
+          status: 'pending',
+          createdAt: serverTimestamp()
+        });
+      });
+
+      return orderId;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'orders');
+      throw error;
+    }
+  };
+
+  const startPaystackPayment = async () => {
     setIsOrdering(true);
     const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
     try {
-      const referralId = sessionStorage.getItem('last_referral_id');
-      const depositAmount = finalPrice * 0.5;
+      const depositAmount = finalPrice;
+      const genRef = 'KNGS_DEP_' + Math.random().toString(36).substring(2, 12).toUpperCase();
 
-      const config = {
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
-        email: user?.email || 'customer@kingsclothing.brand',
-        amount: Math.round(depositAmount * 100), // convert to pesewas
-        currency: 'GHS',
-        metadata: {
-          custom_fields: [
-            {
-              display_name: "Cart Details",
-              variable_name: "cart_details",
-              value: items.map(i => `${i.name} (x${i.quantity})`).join(', ')
-            },
-            {
-              display_name: "Coupon Code",
-              variable_name: "coupon_code",
-              value: appliedCoupon?.code || "NONE"
-            },
-            {
-              display_name: "Momo Number",
-              variable_name: "momo_number",
-              value: momoNumber
-            },
-            {
-              display_name: "Provider",
-              variable_name: "provider",
-              value: momoProvider
-            }
-          ]
-        },
-        callback: async (response: any) => {
-          const orderData = {
-            customerId: user.uid,
-            customerName: user.displayName,
-            customerEmail: user.email,
-            items: items.map(item => ({
-              productId: item.id,
-              name: item.name,
-              gsm: item.gsm,
-              color: item.color,
-              size: item.size,
-              price: item.price,
-              quantity: item.quantity
-            })),
-            totalAmount: finalPrice,
-            depositAmount: depositAmount,
-            discountApplied: totalPrice - finalPrice,
-            appliedCouponCode: appliedCoupon?.code || null,
-            status: 'pending',
-            paymentStatus: 'paid',
-            paystackReference: response.reference,
-            momoNumber: momoNumber,
-            momoProvider: momoProvider,
-            referralAgentId: referralId || null,
-            createdAt: serverTimestamp()
-          };
-
-          try {
-            const orderRef = doc(collection(db, 'orders'));
-            const orderId = orderRef.id;
-
-            await runTransaction(db, async (transaction) => {
-              transaction.set(orderRef, orderData);
-              
-              // 2. Increment salesCount for each product to track trending data
-              items.forEach(item => {
-                const productRef = doc(db, 'products', item.id);
-                transaction.update(productRef, {
-                  salesCount: increment(item.quantity)
-                });
-              });
-
-              if (appliedCoupon) {
-                transaction.update(doc(db, 'coupons', appliedCoupon.id), {
-                  usageCount: increment(1)
-                });
-              }
-            });
-
-            clearCart();
-            toast.dismiss(loadingToast);
-            toast.success('Capital Asset Secured');
-            navigate(`/order/${orderId}`);
-            onClose();
-          } catch (error) {
-            handleFirestoreError(error, OperationType.CREATE, 'orders');
+      const metadata = {
+        custom_fields: [
+          {
+            display_name: "Cart Details",
+            variable_name: "cart_details",
+            value: items.map(i => `${i.name} (x${i.quantity})`).join(', ')
+          },
+          {
+            display_name: "Coupon Code",
+            variable_name: "coupon_code",
+            value: appliedCoupon?.code || "NONE"
+          },
+          {
+            display_name: "Customer Identity",
+            variable_name: "customer_identity",
+            value: user ? `User: ${user.displayName}` : `Guest: ${guestName} (${guestEmail})`
           }
-        },
-        onClose: () => {
+        ]
+      };
+
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || guestEmail || 'customer@example.com',
+          amount: Math.round(depositAmount * 100), // convert to subunits
+          reference: genRef,
+          metadata
+        })
+      });
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
+
+      const initData = await initRes.json();
+
+      const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'CartDrawer Checkout',
+          {
+            reference: genRef,
+            amount: depositAmount,
+            email: user?.email || guestEmail || 'customer@example.com'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
           setIsOrdering(false);
+          return;
+        }
+
+        try {
+          // FIXED: Order is created AFTER successful payment verification
+          const orderId = await createOrder(response, depositAmount);
+          
+          clearCart();
           toast.dismiss(loadingToast);
-          toast.error('Transaction Terminated by User');
+          toast.success('Capital Asset Secured');
+          navigate(`/order/${orderId}`);
+          onClose();
+        } catch (error) {
+          toast.error('Order creation failed after payment success');
+          setIsOrdering(false);
         }
       };
 
+      const handlePaymentClosed = () => {
+        setIsOrdering(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
+
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+      
+      const config = {
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || guestEmail || 'customer@example.com',
+        amount: Math.round(depositAmount * 100), // convert to pesewas
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        ref: genRef,
+        reference: genRef,
+        access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            // FIXED: For simulation, still validate callback before creating order
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            // FIXED: For simulation, still validate callback before creating order
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || genRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsOrdering(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsOrdering(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
+      };
+
+      if (isSimulation || !(window as any).PaystackPop) {
+        initPaystackMock();
+      }
+      
       const handler = (window as any).PaystackPop.setup(config);
       handler.openIframe();
+      toast.dismiss(loadingToast);
 
     } catch (error: any) {
       toast.dismiss(loadingToast);
-      toast.error('Deployment Failed: ' + error.message);
+      toast.error('Terminal Error: ' + error.message);
       setIsOrdering(false);
+    }
+  };
+
+  const handleCheckout = async () => {
+    if (items.length === 0) return;
+
+    if (step === 'cart') {
+      if (user) {
+        await startPaystackPayment();
+      } else {
+        setStep('details');
+      }
+      return;
+    }
+
+    if (step === 'details') {
+      let valid = true;
+      if (!guestName.trim()) {
+        setGuestNameError('Identity verification name is required');
+        valid = false;
+      } else {
+        setGuestNameError('');
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!guestEmail.trim()) {
+        setGuestEmailError('Protocol communication email is required');
+        valid = false;
+      } else if (!emailRegex.test(guestEmail)) {
+        setGuestEmailError('Secure protocol email format is invalid');
+        valid = false;
+      } else {
+        setGuestEmailError('');
+      }
+
+      if (!valid) {
+        toast.error('Identity Credentials Incomplete');
+        return;
+      }
+
+      await startPaystackPayment();
+      return;
     }
   };
 
@@ -209,6 +375,7 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="fixed inset-y-0 right-0 w-full max-w-md bg-background border-l border-white/10 z-[101] flex flex-col"
           >
+            {/* Drawer Header */}
             <div className="p-8 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <ShoppingBag className="w-5 h-5 text-accent" />
@@ -216,15 +383,39 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
               </div>
               <button 
                 onClick={onClose}
+                aria-label="Close cart drawer"
                 className="p-3 hover:bg-white/5 rounded-2xl transition-colors text-white/30 hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
+            {/* Stepper Progress Bar */}
+            {items.length > 0 && !user && (
+              <div className="px-8 py-3 bg-black/20 border-b border-white/5 flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-white/30">
+                <button 
+                  onClick={() => setStep('cart')}
+                  className={cn("flex items-center space-x-1", step === 'cart' ? "text-accent" : "hover:text-white")}
+                  aria-label="Go to step 1: Cart Ledger"
+                >
+                  <span className="font-mono font-bold">01</span>
+                  <span>Ledger</span>
+                </button>
+                <div className="h-px bg-white/10 flex-1 mx-3" />
+                <button 
+                  onClick={() => step !== 'cart' && setStep('details')}
+                  className={cn("flex items-center space-x-1", step === 'details' ? "text-accent" : "hover:text-white")}
+                  aria-label="Go to step 2: Identity"
+                >
+                  <span className="font-mono font-bold">02</span>
+                  <span>Identity</span>
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
               <AnimatePresence mode="wait">
-                {!isPaymentStep ? (
+                {step === 'cart' ? (
                   <motion.div
                     key="cart-items"
                     initial={{ opacity: 0, x: -20 }}
@@ -240,128 +431,140 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     ) : (
                       items.map((item) => (
                         <motion.div 
-                          layout
-                          key={item.cartId}
-                          className="flex items-start space-x-6 group"
+                           layout
+                           key={item.cartId}
+                           className="flex items-start space-x-6 group"
                         >
-                          <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
-                          </div>
-                          <div className="flex-1 space-y-2">
-                            <div className="flex justify-between items-start">
-                              <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
-                              <button 
-                                onClick={() => removeItem(item.cartId)}
-                                className="p-1 text-white/10 hover:text-red-500 transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                            <div className="flex flex-col space-y-1">
-                              <div className="flex items-center space-x-2">
-                                <ShieldCheck className="w-3 h-3 text-accent" />
-                                <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
-                              </div>
-                              <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
-                                {item.color} • {item.size}
-                              </p>
-                            </div>
-                            <div className="flex items-center justify-between pt-4">
-                              <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
-                                <button 
-                                  onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
-                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
-                                >
-                                  -
-                                </button>
-                                <span className="px-4 text-[11px] font-mono font-black">{item.quantity}</span>
-                                <button 
-                                  onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
-                                  className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
-                                >
-                                  +
-                                </button>
-                              </div>
-                              <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
-                            </div>
-                          </div>
+                           <div className="w-24 h-32 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 flex-shrink-0">
+                             <img src={item.image} alt={item.name} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" referrerPolicy="no-referrer" />
+                           </div>
+                           <div className="flex-1 space-y-2">
+                             <div className="flex justify-between items-start">
+                               <h3 className="text-sm font-black uppercase tracking-tighter italic leading-tight">"{item.name}"</h3>
+                               <button 
+                                 onClick={() => removeItem(item.cartId)}
+                                 className="p-1 text-white/10 hover:text-red-500 transition-colors"
+                                 aria-label={`Remove ${item.name} from cart`}
+                               >
+                                 <Trash2 className="w-3.5 h-3.5" />
+                               </button>
+                             </div>
+                             <div className="flex flex-col space-y-1">
+                               <div className="flex items-center space-x-2">
+                                 <ShieldCheck className="w-3 h-3 text-accent" />
+                                 <span className="text-[9px] font-black uppercase tracking-widest text-accent">{item.gsm} GSM Weight</span>
+                               </div>
+                               <p className="text-[9px] font-black uppercase tracking-widest text-white/40">
+                                 {item.color} • {item.size}
+                               </p>
+                             </div>
+                             <div className="flex items-center justify-between pt-4">
+                               <div className="flex items-center bg-white/5 rounded-lg p-1 border border-white/5">
+                                 <button 
+                                   onClick={() => updateQuantity(item.cartId, item.quantity - 1)}
+                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                   aria-label="Decrease quantity"
+                                 >
+                                   -
+                                 </button>
+                                 <span className="px-4 text-[11px] font-mono font-black" aria-live="polite">{item.quantity}</span>
+                                 <button 
+                                   onClick={() => updateQuantity(item.cartId, item.quantity + 1)}
+                                   className="w-8 h-8 flex items-center justify-center text-white/20 hover:text-white"
+                                   aria-label="Increase quantity"
+                                 >
+                                   +
+                                 </button>
+                               </div>
+                               <span className="text-sm font-display font-black italic">{formatGHC(item.price * item.quantity)}</span>
+                             </div>
+                           </div>
                         </motion.div>
                       ))
                     )}
                   </motion.div>
                 ) : (
                   <motion.div
-                    key="payment-step"
+                    key="details-step"
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 20 }}
-                    className="space-y-12"
+                    exit={{ opacity: 0, x: -20 }}
+                    className="space-y-8"
                   >
                     <button 
-                      onClick={() => setIsPaymentStep(false)}
+                      onClick={() => setStep('cart')}
                       className="flex items-center space-x-3 text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
+                      aria-label="Back to Cart list"
                     >
                       <ChevronLeft className="w-4 h-4" />
                       <span>Back to Ledger</span>
                     </button>
 
-                    <div className="space-y-4">
-                      <div className="flex items-center space-x-3 mb-2">
+                    <div className="space-y-3">
+                      <div className="flex items-center space-x-3">
                         <ShieldCheck className="w-6 h-6 text-accent" />
-                        <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white leading-none">MoMo <br/> Injection</h3>
+                        <h3 className="text-4xl font-display font-black uppercase italic tracking-tighter text-white leading-none">Guest Details</h3>
                       </div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">Deploy Secure Network Protocol</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-white/20 italic">No account required to forge royal gear</p>
                     </div>
 
-                    <div className="space-y-10">
-                      <div className="space-y-4">
-                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">Network Provider</label>
-                        <div className="grid grid-cols-3 gap-4">
-                          {[
-                            { id: 'mtn', label: 'MTN' },
-                            { id: 'telecel', label: 'Telecel' },
-                            { id: 'airteltigo', label: 'AT' }
-                          ].map((p) => (
-                            <button
-                              key={p.id}
-                              onClick={() => setMomoProvider(p.id as any)}
-                              className={cn(
-                                "relative py-4 rounded-2xl border-2 transition-all font-black text-[10px] uppercase tracking-widest",
-                                momoProvider === p.id 
-                                  ? "border-accent bg-accent/10 text-white" 
-                                  : "border-white/5 bg-white/5 text-white/40 hover:border-white/10"
-                              )}
-                            >
-                              {p.label}
-                            </button>
-                          ))}
-                        </div>
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <label htmlFor="guest-name" className="text-[10px] font-black uppercase tracking-normal text-white/40 block">Full Name</label>
+                        <input 
+                          id="guest-name"
+                          type="text"
+                          placeholder="Lord/Lady Sterling"
+                          value={guestName}
+                          onChange={(e) => {
+                            setGuestName(e.target.value);
+                            if (e.target.value.trim()) setGuestNameError('');
+                          }}
+                          className={cn(
+                            "w-full bg-white/5 border rounded-2xl p-5 text-sm font-black text-white outline-none focus:border-accent transition-all",
+                            guestNameError ? "border-red-500/50" : "border-white/10"
+                          )}
+                        />
+                        {guestNameError && (
+                          <p className="text-[9px] text-red-400 font-bold uppercase tracking-wider">{guestNameError}</p>
+                        )}
                       </div>
 
-                      <div className="space-y-4">
-                        <label className="text-[10px] font-black uppercase tracking-editorial text-white/40 ml-4">MoMo Number</label>
-                        <div className="relative group">
-                          <Phone className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-accent transition-colors" />
-                          <input 
-                            type="tel"
-                            placeholder="0XX XXX XXXX"
-                            value={momoNumber}
-                            onChange={(e) => setMomoNumber(e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-14 text-sm font-black text-white outline-none focus:border-accent transition-all"
-                          />
-                        </div>
+                      <div className="space-y-2">
+                        <label htmlFor="guest-email" className="text-[10px] font-black uppercase tracking-normal text-white/40 block">Email Address</label>
+                        <input 
+                          id="guest-email"
+                          type="email"
+                          placeholder="sterling@realm.com"
+                          value={guestEmail}
+                          onChange={(e) => {
+                            setGuestEmail(e.target.value);
+                            if (e.target.value.trim()) setGuestEmailError('');
+                          }}
+                          className={cn(
+                            "w-full bg-white/5 border rounded-2xl p-5 text-sm font-black text-white outline-none focus:border-accent transition-all",
+                            guestEmailError ? "border-red-500/50" : "border-white/10"
+                          )}
+                        />
+                        {guestEmailError && (
+                          <p className="text-[9px] text-red-400 font-bold uppercase tracking-wider">{guestEmailError}</p>
+                        )}
                       </div>
                     </div>
 
-                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 space-y-4">
-                      <div className="flex justify-between items-center pb-4 border-b border-white/5">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-white/20">Kingdom Assets</span>
-                        <span className="text-[11px] font-black text-white">{items.length} Units</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-accent">Secured Deposit</span>
-                        <span className="text-xl font-display font-black text-accent">{formatGHC(totalPrice * 0.5)}</span>
-                      </div>
+                    <div className="p-6 bg-white/5 rounded-3xl border border-white/5 text-center">
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40">
+                        Prefer brand personalization?
+                      </p>
+                      <button
+                        onClick={() => {
+                          onClose();
+                          navigate('/auth');
+                        }}
+                        className="mt-4 text-[10px] text-accent font-black uppercase tracking-widest hover:text-white transition-all underline decoration-dotted underline-offset-4"
+                      >
+                        Sign in / Register
+                      </button>
                     </div>
                   </motion.div>
                 )}
@@ -375,13 +578,14 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                   <input 
                     type="text"
                     placeholder="LOYALTY PROTOCOL"
+                    aria-label="Coupon Discount Code"
                     value={couponCode}
                     onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
                     className="flex-1 bg-transparent border-none outline-none text-[10px] font-black uppercase tracking-widest px-4 text-white placeholder:text-white/20"
                   />
                   <button 
                     onClick={handleApplyCoupon}
-                    className="bg-accent text-black px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all"
+                    className="bg-accent text-black px-4 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-white transition-all min-h-[44px]"
                   >
                     Verify
                   </button>
@@ -398,22 +602,24 @@ export function CartDrawer({ isOpen, onClose }: CartDrawerProps) {
                     </div>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Required Deposit</p>
-                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(finalPrice * 0.5)}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-accent italic">Required Payment</p>
+                    <p className="text-xl font-display font-black text-accent italic">{formatGHC(finalPrice)}</p>
                   </div>
                 </div>
 
                 <button
                   onClick={handleCheckout}
                   disabled={isOrdering}
-                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 shadow-2xl active:scale-95 disabled:opacity-50"
+                  className="w-full bg-white text-black py-6 rounded-full font-black uppercase tracking-[0.3em] text-[11px] hover:bg-accent transition-all flex items-center justify-center space-x-3 disabled:opacity-50"
                 >
                   {isOrdering ? (
                     <RefreshCw className="w-5 h-5 animate-spin" />
                   ) : (
                     <>
                       <Zap className="w-5 h-5" />
-                      <span>{isPaymentStep ? 'Initialize Secure Build' : 'Authorize Production'}</span>
+                      <span>
+                        {step === 'details' ? 'Authorize Production' : user ? 'Authorize Production' : 'Confirm Credentials'}
+                      </span>
                     </>
                   )}
                 </button>

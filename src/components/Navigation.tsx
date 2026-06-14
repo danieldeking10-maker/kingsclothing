@@ -1,15 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download } from 'lucide-react';
+import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download, Bell, Tag, Gift } from 'lucide-react';
+import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence, stagger } from 'motion/react';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
 import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
-import { PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
-import { collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
+import { SUPPORT_INTERACTION_NUMBER, CATEGORIES } from '@/src/constants';
+import { collection, query, where, getDocs, limit, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { PWAInstallModal } from './PWAInstallModal';
 
@@ -35,6 +37,72 @@ export function Header() {
   const navigate = useNavigate();
   const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+
+  // Notifications State & Listener
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [lastSeenTime, setLastSeenTime] = useState<number>(() => {
+    return Number(localStorage.getItem('last_seen_notification_time') || '0');
+  });
+
+  useEffect(() => {
+    let q;
+    if (user) {
+      q = query(
+        collection(db, 'notifications'),
+        where('userId', 'in', ['global', user.uid])
+      );
+    } else {
+      q = query(
+        collection(db, 'notifications'),
+        where('userId', '==', 'global')
+      );
+    }
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docsList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // Sort client-side by createdAt descending to avoid composite index requirements
+      docsList.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+        const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+        return timeB - timeA;
+      });
+
+      // Limit to 15 notifications max
+      const limitedDocs = docsList.slice(0, 15);
+      setNotifications(limitedDocs);
+
+      if (limitedDocs.length > 0) {
+        let unread = 0;
+        limitedDocs.forEach((notif: any) => {
+          const creationMs = notif.createdAt?.toMillis ? notif.createdAt.toMillis() : Date.now();
+          if (creationMs > lastSeenTime) {
+            unread++;
+          }
+        });
+        setUnreadCount(unread);
+      } else {
+        setUnreadCount(0);
+      }
+    }, (error) => {
+      console.warn("Notifications listener failed:", error);
+    });
+
+    return () => unsubscribe();
+  }, [lastSeenTime, user]);
+
+  const handleOpenNotifications = () => {
+    setIsNotificationsOpen(!isNotificationsOpen);
+    const now = Date.now();
+    localStorage.setItem('last_seen_notification_time', String(now));
+    setLastSeenTime(now);
+    setUnreadCount(0);
+  };
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -358,9 +426,9 @@ export function Header() {
           <nav className="hidden md:flex items-center space-x-2 lg:space-x-8 flex-shrink-0">
             <Link to="/shop" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Shop</Link>
             <Link to="/agent" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">Agents</Link>
-            {user && (
-              <Link to="/orders" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">My Orders</Link>
-            )}
+            <Link to="/orders" className="text-[10px] font-black uppercase tracking-editorial text-foreground/60 hover:text-accent transition-all">
+              {user ? "My Orders" : "Track Order"}
+            </Link>
             
             {(installPrompt || isIOS) && (
               <button 
@@ -407,9 +475,116 @@ export function Header() {
               )}
             </div>
 
+            {/* Real-time Notifications Bell */}
+            <div className="relative">
+              <button 
+                onClick={handleOpenNotifications}
+                className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 text-foreground/80 hover:text-accent cursor-pointer"
+                title="Citadel Transmissions"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-accent text-black text-[8px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 15 }}
+                    className="absolute right-0 mt-3 w-80 md:w-96 bg-black/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 shadow-3xl z-[100] max-h-[480px] overflow-hidden flex flex-col"
+                  >
+                    <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-accent animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Citadel Live Transmissions</span>
+                      </div>
+                      <span className="text-[8px] font-mono font-bold text-accent/60 uppercase">Real-time Feed</span>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1 max-h-[350px]">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center space-y-2">
+                          <Bell className="w-8 h-8 text-white/5 mx-auto" />
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20">No broadcasts active at this interval</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif: any) => (
+                          <div 
+                            key={notif.id} 
+                            onClick={() => {
+                              if (notif.orderId) {
+                                navigate(`/order/${notif.orderId}`);
+                                setIsNotificationsOpen(false);
+                              }
+                            }}
+                            className={cn(
+                              "p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] transition-all group text-left",
+                              notif.orderId ? "cursor-pointer hover:border-accent/30" : "hover:border-accent/10"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
+                                {notif.type === 'promotion' ? (
+                                  <>
+                                    <Tag className="w-3 h-3" /> Promotion
+                                  </>
+                                ) : notif.type === 'coupon' ? (
+                                  <>
+                                    <Gift className="w-3 h-3" /> Coupon Code
+                                  </>
+                                ) : (
+                                  <>
+                                    <Package className="w-3 h-3 animate-pulse" /> Order Update
+                                  </>
+                                )}
+                              </span>
+                              <span className="text-[8px] font-semibold text-white/25">
+                                {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recent'}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] font-black uppercase text-white group-hover:text-accent transition-colors text-left leading-normal">
+                              {notif.title}
+                            </p>
+
+                            <p className="text-[10px] text-white/60 font-light leading-relaxed text-left">
+                              {notif.message}
+                            </p>
+
+                            {notif.code && (
+                              <div className="flex items-center justify-between mt-2 p-2.5 bg-accent/10 border border-accent/20 rounded-xl">
+                                <span className="text-[9px] font-mono font-black uppercase text-accent tracking-widest">
+                                  {notif.code}
+                                </span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(notif.code);
+                                    toast.success('Discount Code Copied');
+                                  }}
+                                  className="text-[8px] font-black uppercase tracking-wider text-white hover:text-accent font-sans cursor-pointer"
+                                >
+                                  Copy Code
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button 
               onClick={() => setIsCartOpen(true)}
-              className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5"
+              className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 cursor-pointer"
             >
               <ShoppingCart className="w-4 h-4" />
               {totalItems > 0 && (
@@ -422,9 +597,120 @@ export function Header() {
 
           {/* Mobile Right Icons */}
           <div className="flex md:hidden items-center space-x-2 flex-shrink-0">
+            {/* Mobile Notifications Bell Trigger */}
+            <div className="relative">
+              <button 
+                onClick={handleOpenNotifications}
+                className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"
+              >
+                <Bell className="w-6 h-6" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 bg-accent text-black text-[8px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-background">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+              
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 15 }}
+                    className="fixed top-20 left-4 right-4 bg-black/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-6 shadow-3xl z-[100] max-h-[440px] overflow-hidden flex flex-col"
+                  >
+                    <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                      <div className="flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-accent animate-pulse" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white">Citadel transmissions</span>
+                      </div>
+                      <button 
+                        onClick={() => setIsNotificationsOpen(false)}
+                        className="text-[8px] font-black uppercase text-white/40 hover:text-white cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-1 max-h-[320px]">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center space-y-2">
+                          <Bell className="w-8 h-8 text-white/5 mx-auto" />
+                          <p className="text-[9px] font-black uppercase tracking-[0.2em] text-white/20">No active broadcasts</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif: any) => (
+                          <div 
+                            key={notif.id} 
+                            onClick={() => {
+                              if (notif.orderId) {
+                                navigate(`/order/${notif.orderId}`);
+                                setIsMenuOpen(false);
+                              }
+                            }}
+                            className={cn(
+                              "p-4 bg-white/[0.03] border border-white/5 rounded-2xl space-y-1.5 hover:bg-white/[0.05] transition-all group text-left",
+                              notif.orderId ? "cursor-pointer hover:border-accent/30" : "hover:border-accent/10"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="text-[9px] font-black uppercase tracking-wider text-accent flex items-center gap-1.5">
+                                {notif.type === 'promotion' ? (
+                                  <>
+                                    <Tag className="w-3 h-3" /> Promotion
+                                  </>
+                                ) : notif.type === 'coupon' ? (
+                                  <>
+                                    <Gift className="w-3 h-3" /> Coupon Code
+                                  </>
+                                ) : (
+                                  <>
+                                    <Package className="w-3 h-3 animate-pulse" /> Order Update
+                                  </>
+                                )}
+                              </span>
+                              <span className="text-[8px] font-semibold text-white/25">
+                                {notif.createdAt?.toDate ? notif.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'recent'}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] font-black uppercase text-white leading-normal">
+                              {notif.title}
+                            </p>
+
+                            <p className="text-[10px] text-white/60 font-light leading-relaxed">
+                              {notif.message}
+                            </p>
+
+                            {notif.code && (
+                              <div className="flex items-center justify-between mt-2 p-2.5 bg-accent/10 border border-accent/20 rounded-xl">
+                                <span className="text-[9px] font-mono font-black uppercase text-accent tracking-widest">
+                                  {notif.code}
+                                </span>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(notif.code);
+                                    toast.success('Discount Code Copied');
+                                  }}
+                                  className="text-[8px] font-black uppercase tracking-wider text-white hover:text-accent font-sans"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <button 
               onClick={() => setIsCartOpen(true)}
-              className="p-3 relative text-foreground/60 hover:text-accent transition-colors"
+              className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"
             >
               <ShoppingCart className="w-6 h-6" />
               {totalItems > 0 && (
@@ -733,6 +1019,46 @@ export function Footer() {
 
   const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [email, setEmail] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubscribe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) {
+      toast.error('EMAIL REQUIRED');
+      return;
+    }
+    
+    // basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      toast.error('INVALID EMAIL ADDRESS');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const subscriptionId = 'sub_' + Math.random().toString(36).substring(2, 15);
+    const path = `newsletter_subscriptions/${subscriptionId}`;
+
+    try {
+      await setDoc(doc(db, 'newsletter_subscriptions', subscriptionId), {
+        email: email.trim().toLowerCase(),
+        createdAt: serverTimestamp(),
+        active: true
+      });
+      toast.success('CITIZENSHIP GRANTED - SUBSCRIBED');
+      setEmail('');
+    } catch (error) {
+      console.error('Subscription error:', error);
+      try {
+        handleFirestoreError(error, OperationType.CREATE, path);
+      } catch (innerErr) {
+        toast.error('SUBSCRIPTION FAILED. PLEASE TRY AGAIN.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <footer className="bg-background border-t border-white/10 py-16 px-4 relative">
@@ -764,6 +1090,8 @@ export function Footer() {
             <li><Link to="/orders" className="hover:text-white transition-colors">My Orders</Link></li>
             <li><Link to="/about" className="hover:text-white transition-colors">Our Ethos</Link></li>
             <li><Link to="/tos" className="hover:text-white transition-colors">Terms</Link></li>
+            <li><Link to="/faq" className="hover:text-white transition-colors">FAQ Support</Link></li>
+            <li><Link to="/size-guide" className="hover:text-white transition-colors">Sizing Specs</Link></li>
             {((installPrompt && !isInstalled) || isIOS) && (
               <li><button onClick={() => {
                 if (isIOS) setIsInstallModalOpen(true);
@@ -776,14 +1104,14 @@ export function Footer() {
         <div>
           <h3 className="text-xs font-black uppercase tracking-editorial text-accent mb-8">Structure</h3>
           <p className="text-white/50 text-[11px] mb-6 font-medium leading-relaxed uppercase tracking-tighter">
-            50% Initial Deposit required.<br/>Remaining 50% on Delivery.
+            100% Full Payment required.<br/>Secure Paystack & Mobile Money.
           </p>
           <div className="glass p-5 rounded-2xl">
             <p className="text-[10px] text-white/40 uppercase font-black tracking-widest mb-2 italic tracking-[0.3em]">Support Hotline</p>
             <p className="text-sm font-bold text-accent uppercase tracking-widest leading-relaxed mb-4">{SUPPORT_INTERACTION_NUMBER}</p>
             <div className="h-px bg-white/5 w-full mb-4"></div>
             <p className="text-[10px] text-white/40 uppercase font-black tracking-widest mb-2 italic tracking-[0.3em]">Payment Hub</p>
-            <p className="text-[9px] font-bold text-white uppercase tracking-widest leading-relaxed">Secure Paystack Transactions Integrated with {PAYMENT_MOBILE_MONEY}</p>
+            <p className="text-[9px] font-bold text-white uppercase tracking-widest leading-relaxed">Secure Paystack & Mobile Money Transactions Enabled</p>
           </div>
         </div>
 
@@ -792,16 +1120,27 @@ export function Footer() {
           <p className="text-white/40 text-[9px] mb-6 font-black leading-relaxed uppercase tracking-widest italic leading-relaxed">
             Join the inner circle for early blueprint access and exclusive drops.
           </p>
-          <div className="relative group">
+          <form onSubmit={handleSubscribe} className="relative group">
             <input 
               type="email" 
               placeholder="ENTER EMAIL"
-              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent transition-all"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-[10px] font-black uppercase tracking-widest outline-none focus:border-accent transition-all disabled:opacity-50"
             />
-            <button className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent text-black rounded-xl hover:scale-110 active:scale-95 transition-all">
-              <ArrowRight className="w-4 h-4" />
+            <button 
+              type="submit"
+              disabled={isSubmitting}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent text-black rounded-xl hover:scale-110 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center min-w-[32px] min-h-[32px]"
+            >
+              {isSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowRight className="w-4 h-4" />
+              )}
             </button>
-          </div>
+          </form>
           <div className="flex items-center space-x-6 mt-10">
             {[
               { name: 'Instagram', icon: Search },

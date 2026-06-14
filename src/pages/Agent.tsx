@@ -33,20 +33,26 @@ import {
   Eye,
   EyeOff,
   Edit3,
-  Layers
+  Layers,
+  Bell,
+  X,
+  Download
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import React from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, getDoc, increment, runTransaction, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 import { useAuth } from '../lib/AuthContext';
 import { GSM } from '../types';
 import { compressImage } from '../lib/imageUtils';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn, formatGHC } from '@/src/lib/utils';
+import { LoyaltyTerminal } from '../components/LoyaltyTerminal';
 import { FABRIC_COLORS, GSM_OPTIONS } from '../constants';
 import { DesignMetadataModal } from '../components/DesignMetadataModal';
+import { ImageCropModal } from '../components/ImageCropModal';
+import { AdminAnalyticsDashboard } from '../components/AdminAnalyticsDashboard';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -59,7 +65,8 @@ import {
   Bar,
   Legend,
   ComposedChart,
-  Line
+  Line,
+  LineChart
 } from 'recharts';
 
 import { reportError, LogLevel } from '../lib/errorReporting';
@@ -78,8 +85,33 @@ interface DesignAuthorityCardProps {
 
 const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpdatingAsset, handleUpdateAsset, handleUpdateProductStatus, handleDeleteProduct, onCalibrate }) => {
   const [view, setView] = useState<'mockup' | 'studio' | 'blueprint'>('mockup');
+  const [isIntersecting, setIsIntersecting] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const updateInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsIntersecting(true);
+          observer.disconnect();
+        }
+      },
+      {
+        rootMargin: '120px',
+        threshold: 0.01,
+      }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   return (
     <motion.div 
@@ -90,39 +122,40 @@ const DesignAuthorityCard: React.FC<DesignAuthorityCardProps> = ({ design, isUpd
       exit={{ opacity: 0, scale: 0.9 }}
       className="glass p-6 rounded-[2rem] border border-white/5 hover:border-accent/20 transition-all flex flex-col group"
     >
-      <div className="relative aspect-square rounded-2xl overflow-hidden mb-6 bg-black/40">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={view}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="w-full h-full"
-          >
-            <img 
-              referrerPolicy="no-referrer"
-              src={
-                view === 'mockup' ? design.mockupImage : 
-                view === 'studio' ? (design.studioImage || design.mockupImage) :
-                (design.blueprintImage || design.mockupImage)
-              } 
-              alt="" 
-              className={cn(
-                "w-full h-full object-cover transition-all",
-                view === 'mockup' ? "grayscale group-hover:grayscale-0" : ""
-              )} 
-            />
-            {/* Upload Trigger for specific view */}
-            <button 
-              onClick={() => updateInputRef.current?.click()}
-              className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <div className="bg-accent p-3 rounded-full shadow-2xl">
-                <Upload className={cn("w-6 h-6 text-black", isUpdatingAsset && "animate-spin")} />
-              </div>
-            </button>
-          </motion.div>
-        </AnimatePresence>
+      <div 
+        ref={cardRef}
+        className="relative aspect-square rounded-2xl overflow-hidden mb-6 bg-black/40"
+      >
+        {!isIntersecting && (
+          <div className="absolute inset-0 bg-white/5 animate-pulse flex items-center justify-center z-10">
+            <ImageIcon className="w-8 h-8 text-white/10" />
+          </div>
+        )}
+
+        <img 
+          referrerPolicy="no-referrer"
+          src={isIntersecting ? (
+            view === 'mockup' ? design.mockupImage : 
+            view === 'studio' ? (design.studioImage || design.mockupImage) :
+            (design.blueprintImage || design.mockupImage)
+          ) : 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'}
+          alt={design.name || ''} 
+          className={cn(
+            "w-full h-full object-cover transition-all duration-1000",
+            view === 'mockup' ? "grayscale group-hover:grayscale-0" : "",
+            isIntersecting ? "opacity-100 blur-0 scale-100" : "opacity-0 blur-sm scale-95"
+          )} 
+        />
+
+        {/* Upload Trigger for specific view */}
+        <button 
+          onClick={() => updateInputRef.current?.click()}
+          className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity z-20"
+        >
+          <div className="bg-accent p-3 rounded-full shadow-2xl">
+            <Upload className={cn("w-6 h-6 text-black", isUpdatingAsset && "animate-spin")} />
+          </div>
+        </button>
 
         <input 
           type="file" 
@@ -337,6 +370,7 @@ export function AgentPortal() {
     description: '',
     basePrice: 150,
     category: 'T-Shirts',
+    gender: 'unisex' as 'male' | 'female' | 'unisex',
     isPrivate: true,
     allowedColors: FABRIC_COLORS.map(c => c.name),
     gsmOptions: ['260'] as GSM[],
@@ -358,6 +392,25 @@ export function AgentPortal() {
   const [totalCommission, setTotalCommission] = useState(0);
   const [referredAgents, setReferredAgents] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
+
+  // Agent notifications state & ref for monitoring real-time changes
+  const [notifications, setNotifications] = useState<any[]>(() => {
+    try {
+      const stored = localStorage.getItem(`agent_notifications_${user?.uid || 'guest'}`);
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const prevPayoutsRef = useRef<any[]>([]);
+
+  // Keep notifications persistent to the logged in user
+  useEffect(() => {
+    if (user?.uid) {
+      localStorage.setItem(`agent_notifications_${user.uid}`, JSON.stringify(notifications));
+    }
+  }, [notifications, user?.uid]);
   const [allAgents, setAllAgents] = useState<any[]>([]);
   const [allDesigns, setAllDesigns] = useState<any[]>([]);
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
@@ -367,13 +420,16 @@ export function AgentPortal() {
     name: '',
     discountPercentage: 0,
     active: true,
-    message: ''
+    message: '',
+    broadcastNotification: true
   });
   const [newCoupon, setNewCoupon] = useState({
     code: '',
     discountPercentage: 0,
     usageLimit: null as number | null,
-    active: true
+    active: true,
+    message: '',
+    broadcastNotification: true
   });
   const [referralCode, setReferralCode] = useState(agentProfile?.referralCode || '');
   const [momoNumber, setMomoNumber] = useState(agentProfile?.momoNumber || '');
@@ -393,6 +449,8 @@ export function AgentPortal() {
   const [editingProduct, setEditingProduct] = useState<any>(null);
   const [isUpdatingAsset, setIsUpdatingAsset] = useState(false);
   const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [selectedFileForCrop, setSelectedFileForCrop] = useState<File | null>(null);
   const [selectedProductForMetadata, setSelectedProductForMetadata] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ownerFileInputRef = useRef<HTMLInputElement>(null);
@@ -408,52 +466,26 @@ export function AgentPortal() {
     setGeneratedPreview(null);
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
-      const systemContext = `
-        You are a specialized Streetwear Design AI for "Kings Clothing Brand". 
-        Create a high-resolution, premium streetwear mockup image based on the user's concept.
-        The design should feel heavy, authoritative, and regal. 
-        Focus on bold typography, royal emblems, and minimalist but powerful aesthetics.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            { text: `${systemContext}\n\nUser Concept: ${genPrompt}` }
-          ]
+      const response = await fetch('/api/gemini/generate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        config: {
-          imageConfig: {
-            aspectRatio: "1:1"
-          }
-        }
+        body: JSON.stringify({ prompt: genPrompt })
       });
 
-      // Find the image part in the response candidates
-      let foundImage = false;
-      const candidates = (response as any).candidates;
-      if (candidates && candidates[0]?.content?.parts) {
-        for (const part of candidates[0].content.parts) {
-          if (part.inlineData) {
-            const base64Data = part.inlineData.data;
-            setGeneratedPreview(`data:image/png;base64,${base64Data}`);
-            foundImage = true;
-            toast.success('Royal Design Forged!');
-            break;
-          }
-        }
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
       }
 
-      if (!foundImage) {
+      const data = await response.json();
+
+      if (data.imageUrl) {
+        setGeneratedPreview(data.imageUrl);
+        toast.success('Royal Design Forged!');
+      } else {
         throw new Error('AI failed to produce a visual blueprint. Refine your prompt.');
       }
-
     } catch (error: any) {
       console.error('Generation Error:', error);
       toast.error('Forge Failed: ' + error.message);
@@ -466,14 +498,16 @@ export function AgentPortal() {
     if (!generatedPreview || !user) return;
     
     try {
+      const generatedName = (genPrompt.slice(0, 20) + '...').slice(0, 100);
       await addDoc(collection(db, 'products'), {
-        name: genPrompt.slice(0, 20) + '...',
+        name: generatedName,
         category: 'T-Shirts',
+        gender: 'unisex',
         description: `AI Generated concept: ${genPrompt}`,
         basePrice: 150,
         status: 'pending',
         agentId: user.uid,
-        agentName: user.displayName,
+        agentName: user.displayName || 'Imperial AI Artist',
         mockupImage: await compressImage(generatedPreview),
         allowedColors: FABRIC_COLORS.map(c => c.name),
         gsmOptions: ['260'],
@@ -484,6 +518,7 @@ export function AgentPortal() {
       setGenPrompt('');
     } catch (error: any) {
       toast.error('Injection failed: ' + error.message);
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     }
   };
 
@@ -493,12 +528,26 @@ export function AgentPortal() {
       return;
     }
     try {
+      const { broadcastNotification, ...promotionData } = newPromotion;
       await addDoc(collection(db, 'promotions'), {
-        ...newPromotion,
+        ...promotionData,
         createdAt: serverTimestamp()
       });
-      toast.success('Promotion Injected');
-      setNewPromotion({ name: '', discountPercentage: 0, active: true, message: '' });
+
+      if (broadcastNotification) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `New Promotion: ${newPromotion.name}`,
+          message: newPromotion.message || `Enjoy a royal ${newPromotion.discountPercentage}% discount on all elite clothing items.`,
+          type: 'promotion',
+          discountPercentage: newPromotion.discountPercentage,
+          code: null,
+          createdAt: serverTimestamp()
+        });
+        toast.success('Promotion Injected and Broadcast Sent!');
+      } else {
+        toast.success('Promotion Injected silently');
+      }
+      setNewPromotion({ name: '', discountPercentage: 0, active: true, message: '', broadcastNotification: true });
     } catch (e: any) {
       toast.error('Promotion failed: ' + e.message);
     }
@@ -510,14 +559,28 @@ export function AgentPortal() {
       return;
     }
     try {
+      const { broadcastNotification, message, ...couponData } = newCoupon;
       await addDoc(collection(db, 'coupons'), {
-        ...newCoupon,
+        ...couponData,
         code: newCoupon.code.toUpperCase(),
         usageCount: 0,
         createdAt: serverTimestamp()
       });
-      toast.success('Coupon Generated');
-      setNewCoupon({ code: '', discountPercentage: 0, usageLimit: null, active: true });
+
+      if (broadcastNotification) {
+        await addDoc(collection(db, 'notifications'), {
+          title: `New Coupon Activated: ${newCoupon.code.toUpperCase()}`,
+          message: message || `Claim a special ${newCoupon.discountPercentage}% discount with coupon code ${newCoupon.code.toUpperCase()}${newCoupon.usageLimit ? ` (Limit: first ${newCoupon.usageLimit} claims)` : ''}!`,
+          type: 'coupon',
+          discountPercentage: newCoupon.discountPercentage,
+          code: newCoupon.code.toUpperCase(),
+          createdAt: serverTimestamp()
+        });
+        toast.success('Coupon Generated and Broadcast Sent!');
+      } else {
+        toast.success('Coupon Generated silently');
+      }
+      setNewCoupon({ code: '', discountPercentage: 0, usageLimit: null, active: true, message: '', broadcastNotification: true });
     } catch (e: any) {
       toast.error('Coupon failed: ' + e.message);
     }
@@ -527,27 +590,63 @@ export function AgentPortal() {
     if (!user) return;
     
     // Fetch user's designs
+    let unsubscribeDesigns = () => {};
+    let unsubscribeDesignsSimple = () => {};
     const qDesigns = query(
       collection(db, 'products'), 
       where('agentId', '==', user.uid),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
-    const unsubscribeDesigns = onSnapshot(qDesigns, (snapshot) => {
+    unsubscribeDesigns = onSnapshot(qDesigns, (snapshot) => {
       const designs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyDesigns(designs);
+    }, (error) => {
+      console.warn("qDesigns query failed (possibly missing composite index on products), falling back locally:", error);
+      const qDesignsSimple = query(
+        collection(db, 'products'),
+        where('agentId', '==', user.uid),
+        limit(100)
+      );
+      unsubscribeDesignsSimple = onSnapshot(qDesignsSimple, (snapshot) => {
+        const designs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        designs.sort((a, b) => {
+          const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+          const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+          return timeB - timeA;
+        });
+        setMyDesigns(designs.slice(0, 50));
+      });
     });
 
     // Fetch user's orders
+    let unsubscribeOrders = () => {};
+    let unsubscribeOrdersSimple = () => {};
     const qOrders = query(
       collection(db, 'orders'), 
       where('customerId', '==', user.uid),
       orderBy('createdAt', 'desc'),
       limit(50)
     );
-    const unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
+    unsubscribeOrders = onSnapshot(qOrders, (snapshot) => {
       const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMyOrders(orders);
+    }, (error) => {
+      console.warn("qOrders query failed (possibly missing composite index on orders), falling back locally:", error);
+      const qOrdersSimple = query(
+        collection(db, 'orders'),
+        where('customerId', '==', user.uid),
+        limit(100)
+      );
+      unsubscribeOrdersSimple = onSnapshot(qOrdersSimple, (snapshot) => {
+        const orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() as any }));
+        orders.sort((a, b) => {
+          const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || 0;
+          const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || 0;
+          return timeB - timeA;
+        });
+        setMyOrders(orders.slice(0, 50));
+      });
     });
 
     // Fetch referred agents
@@ -555,13 +654,58 @@ export function AgentPortal() {
     const unsubscribeReferred = onSnapshot(qReferred, (snapshot) => {
       const agents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setReferredAgents(agents);
+    }, (error) => {
+      console.warn("qReferred listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'agents');
     });
 
     // Fetch payouts
-    const qPayouts = query(collection(db, 'payouts'), where('agentId', '==', user.uid));
+    const qPayouts = isBrandOwner 
+      ? query(collection(db, 'payouts'))
+      : query(collection(db, 'payouts'), where('agentId', '==', user.uid));
     const unsubscribePayouts = onSnapshot(qPayouts, (snapshot) => {
       const p = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      p.sort((a: any, b: any) => {
+        const timeA = a.createdAt?.toMillis?.() || a.createdAt?.seconds * 1000 || (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const timeB = b.createdAt?.toMillis?.() || b.createdAt?.seconds * 1000 || (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return timeB - timeA;
+      });
+
+      // Intercept real-time status transitions to 'Verified' or 'Disbursed'
+      if (prevPayoutsRef.current && prevPayoutsRef.current.length > 0) {
+        p.forEach((payout: any) => {
+          const oldPayout = prevPayoutsRef.current.find((old: any) => old.id === payout.id);
+          if (oldPayout && oldPayout.status !== payout.status) {
+            const statusNormal = payout.status === 'Completed' ? 'Disbursed' : payout.status;
+            if (statusNormal === 'Verified' || statusNormal === 'Disbursed') {
+              const title = `Payout ${statusNormal}`;
+              const msg = `Your payout request of ${formatGHC(payout.amount || 0)} has been updated to ${statusNormal}.`;
+              
+              // High-vis standard toast notification
+              toast.success(msg, { duration: 6000 });
+
+              // Save persistent history payload
+              setNotifications((prev: any) => [
+                {
+                  id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                  title,
+                  message: msg,
+                  status: statusNormal,
+                  amount: payout.amount || 0,
+                  read: false,
+                  time: new Date().toLocaleTimeString() + ' ' + new Date().toLocaleDateString()
+                },
+                ...prev
+              ]);
+            }
+          }
+        });
+      }
+      prevPayoutsRef.current = p;
       setPayouts(p);
+    }, (error) => {
+      console.warn("qPayouts listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'payouts');
     });
 
     // Fetch Referrals (New tracking logic)
@@ -581,6 +725,9 @@ export function AgentPortal() {
         return acc + (order.depositAmount || 0) * 0.1;
       }, 0);
       setTotalCommission(commission);
+    }, (error) => {
+      console.warn("ordersQuery listener failed:", error);
+      handleFirestoreError(error, OperationType.GET, 'orders');
     });
 
     // Fetch all orders for brand owner for management
@@ -593,6 +740,9 @@ export function AgentPortal() {
       );
       unsubscribeAllOrders = onSnapshot(allOrdersQuery, (snapshot) => {
         setAllOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("allOrdersQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'orders');
       });
     }
 
@@ -611,6 +761,9 @@ export function AgentPortal() {
       );
       unsubscribeAllAgents = onSnapshot(agentsQuery, (snapshot) => {
         setAllAgents(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("agentsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'agents');
       });
 
       const designsQuery = query(
@@ -620,16 +773,25 @@ export function AgentPortal() {
       );
       unsubscribeAllDesigns = onSnapshot(designsQuery, (snapshot) => {
         setAllDesigns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("designsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'products');
       });
 
       const promotionsQuery = query(collection(db, 'promotions'));
       unsubscribePromotions = onSnapshot(promotionsQuery, (snapshot) => {
         setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("promotionsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'promotions');
       });
 
       const couponsQuery = query(collection(db, 'coupons'));
       unsubscribeCoupons = onSnapshot(couponsQuery, (snapshot) => {
         setCoupons(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (error) => {
+        console.warn("couponsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'coupons');
       });
 
       const logsQuery = query(
@@ -639,12 +801,17 @@ export function AgentPortal() {
       );
       unsubscribeLogs = onSnapshot(logsQuery, (snapshot) => {
         setSystemLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+      }, (error) => {
+        console.warn("logsQuery listener failed:", error);
+        handleFirestoreError(error, OperationType.GET, 'system_logs');
       });
     }
 
     return () => {
       unsubscribeDesigns();
+      unsubscribeDesignsSimple();
       unsubscribeOrders();
+      unsubscribeOrdersSimple();
       unsubscribeReferred();
       unsubscribePayouts();
       unsubscribeReferrals();
@@ -761,6 +928,69 @@ export function AgentPortal() {
     return data;
   }, [referrals, myDesigns]);
 
+  const owner30DayTrendData = useMemo(() => {
+    if (!isBrandOwner) return [];
+    
+    const data = [];
+    const now = new Date();
+    
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const dateStr = d.toLocaleDateString('default', { month: 'short', day: 'numeric' });
+      data.push({
+        dateStr,
+        timestamp: d.getTime(),
+        revenue: 0,
+        volume: 0,
+        rawDate: d
+      });
+    }
+
+    allOrders.forEach(order => {
+      if (!order.createdAt) return;
+      let orderDate;
+      if (order.createdAt.toDate) {
+        orderDate = order.createdAt.toDate();
+      } else if (order.createdAt.seconds) {
+        orderDate = new Date(order.createdAt.seconds * 1000);
+      } else {
+        orderDate = new Date(order.createdAt);
+      }
+      
+      const orderDayStart = new Date(orderDate.getFullYear(), orderDate.getMonth(), orderDate.getDate()).getTime();
+      const match = data.find(day => day.timestamp === orderDayStart);
+      if (match) {
+        match.revenue += Number(order.totalAmount || 0);
+        match.volume += 1;
+      }
+    });
+
+    return data;
+  }, [allOrders, isBrandOwner]);
+
+  const owner30DayStats = useMemo(() => {
+    if (!isBrandOwner || owner30DayTrendData.length === 0) {
+      return { totalRevenue: 0, totalVolume: 0, aov: 0, peakDailySales: 0 };
+    }
+    
+    let totalRevenue = 0;
+    let totalVolume = 0;
+    let peakDailySales = 0;
+    
+    owner30DayTrendData.forEach(day => {
+      totalRevenue += day.revenue;
+      totalVolume += day.volume;
+      if (day.revenue > peakDailySales) {
+        peakDailySales = day.revenue;
+      }
+    });
+    
+    const aov = totalVolume > 0 ? totalRevenue / totalVolume : 0;
+    
+    return { totalRevenue, totalVolume, aov, peakDailySales };
+  }, [owner30DayTrendData, isBrandOwner]);
+
   const shareLinks = useMemo(() => {
     if (!user) return { twitter: '', whatsapp: '' };
     const code = referralCode || user.uid;
@@ -853,7 +1083,6 @@ export function AgentPortal() {
         setUploadProgress(25);
         // AI Generation protocol for missing studio vision
         try {
-          const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
           const studioPrompt = `
             High-end luxury studio photography of a premium streetwear ${ownerForm.category} product.
             Product Identity: ${ownerForm.name}.
@@ -862,22 +1091,22 @@ export function AgentPortal() {
             Display: Professional flat lay or lifestyle presentation.
           `;
 
-          const genResults = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: { parts: [{ text: studioPrompt }] },
-            config: { imageConfig: { aspectRatio: "4:3" } }
+          const response = await fetch('/api/gemini/generate-design', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ prompt: studioPrompt })
           });
 
-          // Extract image from parts
-          const candidates = (genResults as any).candidates;
-          if (candidates && candidates[0]?.content?.parts) {
-            for (const part of candidates[0].content.parts) {
-              if (part.inlineData) {
-                finalStudioImage = `data:image/png;base64,${part.inlineData.data}`;
-                toast.success('AI Studio Vision Forged');
-                break;
-              }
-            }
+          if (!response.ok) {
+            throw new Error(`Server returned status ${response.status}`);
+          }
+
+          const data = await response.json();
+          if (data.imageUrl) {
+            finalStudioImage = data.imageUrl;
+            toast.success('AI Studio Vision Forged');
           }
         } catch (genError: any) {
           console.error('Studio Gen Error:', genError);
@@ -910,8 +1139,9 @@ export function AgentPortal() {
       setUploadProgress(90);
 
       await addDoc(collection(db, 'products'), {
-        name: ownerForm.name,
-        category: ownerForm.category,
+        name: ownerForm.name.slice(0, 100),
+        category: ownerForm.category.slice(0, 100),
+        gender: ownerForm.gender || 'unisex',
         description: ownerForm.description || 'Authorized Brand Owner Submission',
         basePrice: Number(ownerForm.basePrice),
         status: 'approved',
@@ -940,6 +1170,7 @@ export function AgentPortal() {
           description: '',
           basePrice: 150,
           category: 'T-Shirts',
+          gender: 'unisex',
           isPrivate: true,
           allowedColors: FABRIC_COLORS.map(c => c.name),
           gsmOptions: ['260'] as GSM[],
@@ -953,6 +1184,7 @@ export function AgentPortal() {
     } catch (error: any) {
       toast.error('Owner injection failed: ' + error.message);
       setUploadProgress(0);
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     } finally {
       setIsOwnerUploading(false);
     }
@@ -962,7 +1194,7 @@ export function AgentPortal() {
     if (!user || totalCommission <= 0) return;
     
     // Calculate current balance
-    const totalPaid = payouts.reduce((acc, p) => acc + (p.amount || 0), 0);
+    const totalPaid = payouts.filter(p => p.agentId === user.uid).reduce((acc, p) => acc + (p.amount || 0), 0);
     const balance = totalCommission - totalPaid;
     
     if (balance < 10) {
@@ -991,6 +1223,18 @@ export function AgentPortal() {
     }
   };
 
+  const handleUpdatePayoutStatus = async (payoutId: string, newStatus: 'Pending' | 'Verified' | 'Disbursed') => {
+    try {
+      await updateDoc(doc(db, 'payouts', payoutId), {
+        status: newStatus,
+        updatedAt: serverTimestamp()
+      });
+      toast.success(`Payout successfully marked as ${newStatus}`);
+    } catch (error: any) {
+      toast.error(`Failed to update payout: ${error.message}`);
+    }
+  };
+
   const handleUpdateProfile = async () => {
     if (!user) return;
     try {
@@ -1009,6 +1253,8 @@ export function AgentPortal() {
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     if (!isBrandOwner) return;
     try {
+      let orderToNotify: any = null;
+
       await runTransaction(db, async (transaction) => {
         const orderRef = doc(db, 'orders', orderId);
         const orderSnap = await transaction.get(orderRef);
@@ -1017,31 +1263,64 @@ export function AgentPortal() {
         const orderData = orderSnap.data();
         const oldStatus = orderData.status;
 
+        // Perform any additional reads FIRST before any updates/sets
+        let agentSnap = null;
+        let agentRef = null;
+        if (orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
+
+        // --- ALL READS DONE. WRITES BEGIN AFTER ---
+
         transaction.update(orderRef, {
           status: newStatus,
           updatedAt: serverTimestamp()
         });
 
+        // Trigger notification for order status change
+        const notifRef = doc(collection(db, 'notifications'));
+        let notifMessage = `Your order #${orderId.slice(0, 8)} status has updated to ${newStatus.toUpperCase()}.`;
+        if (newStatus === 'processing') {
+          notifMessage = `Payment confirmed! Your order #${orderId.slice(0, 8)} is now being styled and printed.`;
+        } else if (newStatus === 'shipped') {
+          notifMessage = `Royal shipment active! Status of order #${orderId.slice(0, 8)} has been upgraded to SHIPPED.`;
+        } else if (newStatus === 'cancelled') {
+          notifMessage = `Order #${orderId.slice(0, 8)} has been cancelled.`;
+        } else if (newStatus === 'delivered') {
+          notifMessage = `Your order #${orderId.slice(0, 8)} has been delivered!`;
+        } else if (newStatus === 'completed') {
+          notifMessage = `Your order #${orderId.slice(0, 8)} is now completed!`;
+        }
+
+        transaction.set(notifRef, {
+          title: `Order Status: ${newStatus.toUpperCase()}`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: orderId,
+          status: newStatus,
+          createdAt: serverTimestamp()
+        });
+
         // Handle Stats based on status transition
-        if (orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
           
           // 1. Pending -> Processing (Confirmed)
           if (oldStatus === 'pending' && newStatus === 'processing') {
+            const crownsEarned = Math.floor(orderData.totalAmount * 10);
             transaction.update(agentRef, {
-              'stats.totalSales': increment(orderData.totalAmount)
+              'stats.totalSales': increment(orderData.totalAmount),
+              loyaltyPoints: increment(crownsEarned)
             });
             
             // Credit Referrer
-            const agentSnap = await transaction.get(agentRef);
-            if (agentSnap.exists()) {
-              const agentData = agentSnap.data();
-              if (agentData?.referredBy) {
-                const referrerRef = doc(db, 'agents', agentData.referredBy);
-                transaction.update(referrerRef, {
-                  'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
-                });
-              }
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(orderData.totalAmount * 0.10)
+              });
             }
           }
           
@@ -1056,26 +1335,71 @@ export function AgentPortal() {
               });
             });
 
+            const crownsDeducted = Math.floor(orderData.totalAmount * 10);
             transaction.update(agentRef, {
-              'stats.totalSales': increment(-orderData.totalAmount)
+              'stats.totalSales': increment(-orderData.totalAmount),
+              loyaltyPoints: increment(-crownsDeducted)
             });
             
             // Reverse Referrer Commission
-            const agentSnap = await transaction.get(agentRef);
-            if (agentSnap.exists()) {
-              const agentData = agentSnap.data();
-              if (agentData?.referredBy) {
-                const referrerRef = doc(db, 'agents', agentData.referredBy);
-                transaction.update(referrerRef, {
-                  'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
-                });
-              }
+            if (agentData?.referredBy) {
+              const referrerRef = doc(db, 'agents', agentData.referredBy);
+              transaction.update(referrerRef, {
+                'stats.commissionEarned': increment(-(orderData.totalAmount * 0.10))
+              });
             }
           }
+        }
+
+        // Check if status transitioned from 'pending' to 'processing' or 'shipped'
+        if (oldStatus === 'pending' && (newStatus === 'processing' || newStatus === 'shipped')) {
+          orderToNotify = {
+            orderId,
+            customerName: orderData.customerName || 'Customer',
+            customerEmail: orderData.customerEmail || 'no-reply@kingsclothing.brand',
+            momoNumber: orderData.momoNumber || '',
+            status: newStatus,
+            items: orderData.items || [],
+            totalAmount: orderData.totalAmount || 0
+          };
         }
       });
 
       toast.success(`Order ${orderId.slice(0, 8)} status updated to ${newStatus}`);
+
+      // If transition requires notification and transacted successfully, dispatch notification
+      if (orderToNotify) {
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(orderToNotify)
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              throw new Error(await res.text());
+            }
+            return res.json();
+          })
+          .then((data) => {
+            if (data.email?.error?.includes('missing') || data.sms?.error?.includes('missing')) {
+              toast.success('Simulation Mode: Check the server console for full email & SMS design payloads!', {
+                duration: 6000,
+                icon: 'ℹ️'
+              });
+            } else {
+              const smsStatus = data.sms?.dispatched ? 'dispatched' : 'scaled back';
+              const emailStatus = data.email?.dispatched ? 'dispatched' : 'scaled back';
+              toast.success(`Notifications sent (SMS: ${smsStatus}, Email: ${emailStatus})`, {
+                icon: '✉️'
+              });
+            }
+          })
+          .catch((err) => {
+            console.error('Failed to dispatch order status notifications:', err);
+          });
+      }
     } catch (error: any) {
       toast.error('Update failed: ' + error.message);
     }
@@ -1154,6 +1478,82 @@ export function AgentPortal() {
     }
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFileForCrop(file);
+      setIsCropModalOpen(true);
+    }
+  };
+
+  const handleProcessedUpload = async (croppedBase64: string) => {
+    if (!user) return;
+
+    setIsUploading(true);
+    setUploadStatus('scanning');
+    setScanResults(null);
+
+    // AI Verification Logic using Gemini
+    try {
+      // Extract raw base64 data to send to Gemini
+      const base64Data = croppedBase64.split(',')[1];
+      const mimeType = 'image/jpeg';
+
+      const response = await fetch('/api/gemini/validate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ base64Data, mimeType })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const result = await response.json();
+      setScanResults(result.reasoning);
+
+      if (result.passed) {
+        setUploadStatus('success');
+        const finalName = (result.suggestedName || 'Streetwear Concept').slice(0, 100);
+        const finalCategory = (result.category || 'T-Shirts').slice(0, 100);
+        // Persist to Firestore
+        await addDoc(collection(db, 'products'), {
+          name: finalName,
+          category: finalCategory,
+          gender: 'unisex',
+          description: result.reasoning,
+          basePrice: 150,
+          status: 'pending',
+          agentId: user.uid,
+          agentName: user.displayName || 'Anonymous Agent',
+          mockupImage: await compressImage(croppedBase64),
+          allowedColors: FABRIC_COLORS.map(c => c.name),
+          gsmOptions: ['260'],
+          createdAt: serverTimestamp()
+        });
+        toast.success(`"${finalName}" (${finalCategory}) Injected: Royal Sanity Check Passed`);
+        setIsCropModalOpen(false);
+      } else {
+        setUploadStatus('rejected');
+        toast.error('Authority Rejected');
+        setIsCropModalOpen(false);
+      }
+
+    } catch (error: any) {
+      console.error('AI Scan Error:', error);
+      toast.error('AI Scan failed: ' + error.message);
+      setUploadStatus('idle');
+      handleFirestoreError(error, OperationType.CREATE, 'products');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -1164,12 +1564,6 @@ export function AgentPortal() {
 
     // AI Verification Logic using Gemini
     try {
-      if (!process.env.GEMINI_API_KEY) {
-        throw new Error('AI API Key not configured');
-      }
-
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      
       // Convert file to base64
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
@@ -1181,60 +1575,41 @@ export function AgentPortal() {
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
-      const prompt = `
-        You are the Kings Clothing Brand AI Validator. 
-        Perform a surgical analysis of this design asset for:
-        1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
-        2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
-        3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
-        
-        Provide a verdict on whether this design is worthy of being forged into a blueprint.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: {
-          parts: [
-            { text: prompt },
-            { inlineData: { data: base64Data, mimeType: file.type } }
-          ]
+      const response = await fetch('/api/gemini/validate-design', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["passed", "reasoning", "suggestedName", "category"],
-            properties: {
-              passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
-              reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
-              suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
-              category: { type: Type.STRING, description: "The most suitable clothing category." },
-              score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
-            }
-          }
-        }
+        body: JSON.stringify({ base64Data, mimeType: file.type })
       });
 
-      const result = JSON.parse(response.text);
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const result = await response.json();
       setScanResults(result.reasoning);
 
       if (result.passed) {
         setUploadStatus('success');
+        const finalName = (result.suggestedName || 'Streetwear Concept').slice(0, 100);
+        const finalCategory = (result.category || 'T-Shirts').slice(0, 100);
         // Persist to Firestore
         await addDoc(collection(db, 'products'), {
-          name: result.suggestedName || 'Streetwear Concept',
-          category: result.category || 'T-Shirts',
+          name: finalName,
+          category: finalCategory,
+          gender: 'unisex',
           description: result.reasoning,
           basePrice: 150,
           status: 'pending',
           agentId: user.uid,
-          agentName: user.displayName,
+          agentName: user.displayName || 'Anonymous Agent',
           mockupImage: await compressImage(`data:${file.type};base64,${base64Data}`),
           allowedColors: FABRIC_COLORS.map(c => c.name),
           gsmOptions: ['260'],
           createdAt: serverTimestamp()
         });
-        toast.success(`"${result.suggestedName}" (${result.category}) Injected: Royal Sanity Check Passed`);
+        toast.success(`"${finalName}" (${finalCategory}) Injected: Royal Sanity Check Passed`);
       } else {
         setUploadStatus('rejected');
         toast.error('Authority Rejected');
@@ -1244,6 +1619,7 @@ export function AgentPortal() {
       console.error('AI Scan Error:', error);
       toast.error('AI Scan failed: ' + error.message);
       setUploadStatus('idle');
+      handleFirestoreError(error, OperationType.CREATE, 'products');
     } finally {
       setIsUploading(false);
       // Auto-reset the console and status after a delay unless it was a success/rejection that needs viewing
@@ -1304,14 +1680,117 @@ export function AgentPortal() {
               )}
             </div>
             
-            <div className="flex items-center space-x-6 bg-white/5 p-6 rounded-[2.5rem] border border-white/10 group hover:border-accent/40 transition-all duration-500">
-               <div className="text-right">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-1">Session Active</p>
-                  <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{user.displayName || 'Anonymous Agent'}</p>
-               </div>
-               <div className="w-16 h-16 rounded-[1.5rem] bg-accent flex items-center justify-center font-black text-2xl text-black shadow-xl shadow-accent/20 rotate-3 group-hover:rotate-0 transition-transform">
-                  {user.displayName?.charAt(0) || 'K'}
-               </div>
+            <div className="flex items-center gap-4">
+              {/* Notification Center Trigger and Popover */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                  className="w-16 h-16 rounded-[1.5rem] bg-white/5 border border-white/10 flex items-center justify-center text-white hover:text-accent hover:border-accent/40 transition-all shadow-xl group/bell active:scale-[0.98]"
+                >
+                  <div className="relative">
+                    <Bell className="w-6 h-6 group-hover/bell:animate-bounce" />
+                    {notifications.some(n => !n.read) && (
+                      <span className="absolute -top-2 -right-2 bg-accent text-black font-black text-[9px] px-2 py-0.5 rounded-full animate-pulse border border-background">
+                        {notifications.filter(n => !n.read).length}
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                {/* Dropdown Menu / Popover Panel */}
+                <AnimatePresence>
+                  {isNotificationOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 15, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 15, scale: 0.95 }}
+                      className="absolute right-0 mt-4 w-96 bg-[#0B0B0C] border-2 border-white/5 rounded-[2rem] p-6 shadow-2xl z-50 overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
+                        <div className="flex items-center space-x-2">
+                          <Bell className="w-4 h-4 text-accent" />
+                          <span className="text-xs font-black uppercase tracking-[0.2em] text-white">System Feed</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {notifications.length > 0 && (
+                            <button
+                              onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                              className="text-[9px] font-black uppercase tracking-widest text-accent hover:underline"
+                            >
+                              Mark all read
+                            </button>
+                          )}
+                          <button
+                            onClick={() => setIsNotificationOpen(false)}
+                            className="text-white/40 hover:text-white transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-80 overflow-y-auto space-y-3 pr-1">
+                        {notifications.length === 0 ? (
+                          <div className="py-12 text-center text-white/20 text-[9px] font-black uppercase tracking-[0.2em] italic">
+                            No notifications in history
+                          </div>
+                        ) : (
+                          notifications.map((notif) => (
+                            <div
+                              key={notif.id}
+                              onClick={() => {
+                                // Mark single as read
+                                setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+                              }}
+                              className={cn(
+                                "p-4 rounded-2xl border transition-all text-left relative overflow-hidden cursor-pointer",
+                                notif.read ? "bg-white/[0.01] border-white/5 opacity-50" : "bg-white/5 border-accent/25 hover:border-accent"
+                              )}
+                            >
+                              <div className="flex justify-between items-start mb-1">
+                                <span className={cn(
+                                  "text-[9px] font-black uppercase tracking-[0.15em] px-2 py-0.5 rounded-md",
+                                  notif.status === 'Verified' ? "bg-green-500/15 text-green-400 border border-green-500/20" : "bg-accent/15 text-accent border border-accent/20"
+                                )}>
+                                  {notif.status}
+                                </span>
+                                <span className="text-[8px] font-mono text-white/30">{notif.time.split(' ')[0]}</span>
+                              </div>
+                              <p className="text-[11px] font-bold text-white leading-tight mb-1">{notif.title}</p>
+                              <p className="text-[10px] text-white/40 leading-relaxed font-black uppercase tracking-tight italic">{notif.message}</p>
+                              {!notif.read && (
+                                <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-accent rounded-full animate-ping" />
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {notifications.length > 0 && (
+                        <div className="pt-4 border-t border-white/5 mt-4 flex justify-between items-center text-[9px] font-black uppercase tracking-widest text-white/20">
+                          <span>Total Logs: {notifications.length}</span>
+                          <button
+                            onClick={() => setNotifications([])}
+                            className="hover:text-red-400 transition-colors uppercase"
+                          >
+                            Purge History
+                          </button>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex items-center space-x-6 bg-white/5 p-6 rounded-[2.5rem] border border-white/10 group hover:border-accent/40 transition-all duration-500">
+                 <div className="text-right">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-white/30 mb-1">Session Active</p>
+                    <p className="text-sm font-bold text-white group-hover:text-accent transition-colors">{user.displayName || 'Anonymous Agent'}</p>
+                 </div>
+                 <div className="w-16 h-16 rounded-[1.5rem] bg-accent flex items-center justify-center font-black text-2xl text-black shadow-xl shadow-accent/20 rotate-3 group-hover:rotate-0 transition-transform">
+                    {user.displayName?.charAt(0) || 'K'}
+                 </div>
+              </div>
             </div>
           </div>
         </header>
@@ -1367,6 +1846,9 @@ export function AgentPortal() {
             </motion.div>
           ))}
         </section>
+
+        {/* Loyalty Point System Terminal */}
+        <LoyaltyTerminal user={user} agentProfile={agentProfile} />
 
         {/* Performance Intelligence - Visual Analytics */}
         <section className="space-y-12">
@@ -1554,7 +2036,7 @@ export function AgentPortal() {
               </div>
               
               <div className="flex items-center gap-4">
-                 <input type="file" hidden ref={fileInputRef} onChange={handleFileUpload} accept="image/*" />
+                 <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept="image/*" />
                  <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
@@ -1608,7 +2090,7 @@ export function AgentPortal() {
                                    <p className="text-white text-lg font-black uppercase italic tracking-tighter leading-none truncate">{design.name}</p>
                                    <div className="flex items-center justify-between">
                                       <p className="text-accent font-mono font-black text-xs">{formatGHC(design.basePrice || 150)}</p>
-                                      <span className="text-[8px] font-black uppercase text-white/20 tracking-widest">{design.category}</span>
+                                      <span className="text-[8px] font-black uppercase text-white/20 tracking-widest">{design.category} • {design.gender || 'unisex'}</span>
                                    </div>
                                 </div>
                              </div>
@@ -1704,7 +2186,7 @@ export function AgentPortal() {
                     </div>
                     
                     <div className="space-y-8">
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                           <div className="space-y-3">
                              <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Blueprint Identity</label>
                              <input 
@@ -1728,6 +2210,18 @@ export function AgentPortal() {
                                <option value="Accessories">Accessories</option>
                                <option value="Exclusive">Exclusive</option>
                                <option value="Streetwear">Streetwear</option>
+                             </select>
+                          </div>
+                          <div className="space-y-3">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-black/40 px-2 italic">Gender Classification</label>
+                             <select 
+                               value={ownerForm.gender}
+                               onChange={(e) => setOwnerForm({...ownerForm, gender: e.target.value as any})}
+                               className="w-full bg-black/5 border-2 border-black/5 rounded-2xl p-5 text-sm font-bold uppercase tracking-tight focus:border-accent focus:bg-white outline-none appearance-none cursor-pointer transition-all"
+                             >
+                               <option value="unisex">Unisex</option>
+                               <option value="male">Male</option>
+                               <option value="female">Female</option>
                              </select>
                           </div>
                        </div>
@@ -2640,6 +3134,24 @@ export function AgentPortal() {
                               onChange={(e) => setNewPromotion({...newPromotion, message: e.target.value})}
                               className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-medium outline-none focus:border-accent resize-none h-24"
                            />
+                           
+                           {/* Broadcast Toggle */}
+                           <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
+                              <div className="flex flex-col">
+                                 <span className="text-[10px] font-black uppercase tracking-widest text-white">Broadcast Announcement</span>
+                                 <span className="text-[8px] font-medium text-white/40">Dispatch a live feed item to the global customer dashboard</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                 <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={newPromotion.broadcastNotification}
+                                    onChange={(e) => setNewPromotion({...newPromotion, broadcastNotification: e.target.checked})}
+                                 />
+                                 <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                              </label>
+                           </div>
+
                            <button 
                               onClick={handleAddPromotion}
                               className="w-full bg-accent text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-white transition-all active:scale-95 shadow-xl"
@@ -2714,6 +3226,30 @@ export function AgentPortal() {
                               onChange={(e) => setNewCoupon({...newCoupon, usageLimit: e.target.value ? Number(e.target.value) : null})}
                               className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold uppercase tracking-widest outline-none focus:border-accent"
                            />
+                           <textarea 
+                              placeholder="Coupon Dispatch Message (e.g. Claim 10% discount applying KING10!)"
+                              value={newCoupon.message}
+                              onChange={(e) => setNewCoupon({...newCoupon, message: e.target.value})}
+                              className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-medium outline-none focus:border-accent resize-none h-20 mb-4"
+                           />
+
+                           {/* Broadcast Toggle */}
+                           <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl mb-4">
+                              <div className="flex flex-col">
+                                 <span className="text-[10px] font-black uppercase tracking-widest text-accent font-sans">Broadcast Coupon</span>
+                                 <span className="text-[8px] font-medium text-white/40 font-sans">Alert citizens about this loyalty discount code immediately</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                 <input 
+                                    type="checkbox" 
+                                    className="sr-only peer"
+                                    checked={newCoupon.broadcastNotification}
+                                    onChange={(e) => setNewCoupon({...newCoupon, broadcastNotification: e.target.checked})}
+                                 />
+                                 <div className="w-11 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
+                              </label>
+                           </div>
+
                            <button 
                               onClick={handleAddCoupon}
                               className="w-full bg-white text-black py-4 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-accent transition-all active:scale-95 shadow-xl"
@@ -2755,7 +3291,19 @@ export function AgentPortal() {
                         </div>
                      </div>
                   </div>
-               </section>
+                </section>
+             )}
+
+            {/* Sovereign Operational Velocity (Admin Analytics Dashboard) */}
+            {isBrandOwner && (
+               <div className="mb-24">
+                  <AdminAnalyticsDashboard 
+                     allOrders={allOrders}
+                     allAgents={allAgents}
+                     allDesigns={allDesigns}
+                     agentPerformance={agentPerformance}
+                  />
+               </div>
             )}
 
             {/* Fulfillment Ledger (Brand Owner Only) */}
@@ -2879,7 +3427,7 @@ export function AgentPortal() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-center gap-6">
-                  <input type="file" hidden ref={fileInputRef} onChange={handleFileUpload} accept="image/*" />
+                  <input type="file" hidden ref={fileInputRef} onChange={handleFileSelect} accept="image/*" />
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
@@ -3132,6 +3680,172 @@ export function AgentPortal() {
                         </motion.div>
                      ))
                   )}
+               </div>
+            </section>
+
+            {/* Royal Distribution Ledger (Commission Payouts Table) */}
+            <section className="space-y-10">
+               <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-6">
+                  <div className="space-y-1">
+                     <div className="flex items-center space-x-3">
+                        <div className="bg-accent/15 p-2 rounded-xl">
+                           <Wallet className="w-5 h-5 text-accent" />
+                        </div>
+                        <h3 className="text-xl font-display font-black uppercase tracking-editorial italic text-accent">Royal Distribution Ledger<span className="text-white">_</span></h3>
+                     </div>
+                     <p className="text-[10px] font-black uppercase tracking-widest text-white/30 italic">Real-time commission disbursements and verified node earnings</p>
+                  </div>
+                  
+                  {/* Financial Stats Summary Row */}
+                  <div className="flex gap-4">
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Pending Ledger</p>
+                        <p className="text-base font-mono font-black text-yellow-500">
+                           {formatGHC(payouts.filter(p => p.status === 'Requested' || p.status === 'Pending').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Verified Gate</p>
+                        <p className="text-base font-mono font-black text-blue-400">
+                           {formatGHC(payouts.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                     <div className="bg-[#0F0F10] border-2 border-white/5 px-6 py-4 rounded-2xl text-center min-w-[120px]">
+                        <p className="text-[8px] font-black uppercase tracking-widest text-white/30 mb-1">Disbursed Node</p>
+                        <p className="text-base font-mono font-black text-green-400">
+                           {formatGHC(payouts.filter(p => p.status === 'Disbursed' || p.status === 'Completed').reduce((acc, p) => acc + (p.amount || 0), 0))}
+                        </p>
+                     </div>
+                  </div>
+               </div>
+
+               <div className="bg-[#0F0F10] rounded-[3.5rem] border-4 border-white/10 overflow-hidden shadow-2xl">
+                  <div className="overflow-x-auto">
+                     <table className="w-full text-left min-w-[900px]">
+                        <thead>
+                           <tr className="border-b border-white/10 bg-white/5">
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Payout Registry Node</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Disbursement Channel</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Amount Requested</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Temporal Stamp</th>
+                              <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40">Operational Status</th>
+                              {isBrandOwner && (
+                                 <th className="px-10 py-7 text-[10px] font-black uppercase tracking-widest text-white/40 text-right">Ledger Calibration</th>
+                              )}
+                           </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                           {payouts.length === 0 ? (
+                              <tr>
+                                 <td colSpan={isBrandOwner ? 6 : 5} className="px-10 py-24 text-center">
+                                    <div className="max-w-sm mx-auto space-y-4">
+                                       <CreditCard className="w-12 h-12 text-white/5 mx-auto animate-pulse" strokeWidth={1} />
+                                       <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/20 italic">No distribution payloads detected in the current channel.</p>
+                                    </div>
+                                 </td>
+                              </tr>
+                           ) : (
+                              payouts.map((p) => {
+                                 // Determine mapped labels & statuses
+                                 const status = p.status || 'Pending';
+                                 
+                                 let badgeStyle = "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20";
+                                 let displayStatus = 'Pending';
+                                 if (status === 'Verified') {
+                                    badgeStyle = "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+                                    displayStatus = 'Verified';
+                                 } else if (status === 'Disbursed' || status === 'Completed') {
+                                    badgeStyle = "bg-green-500/10 text-green-400 border border-green-500/20";
+                                    displayStatus = 'Disbursed';
+                                 }
+
+                                 return (
+                                    <tr key={p.id} className="hover:bg-white/[0.03] transition-colors group">
+                                       <td className="px-10 py-7">
+                                          <div className="flex items-center space-x-4">
+                                             <div className="w-10 h-10 rounded-xl bg-black/60 border border-white/10 flex items-center justify-center text-[11px] font-bold text-accent font-mono">
+                                                ★
+                                             </div>
+                                             <div>
+                                                <p className="text-sm font-black text-white italic group-hover:text-accent transition-colors leading-none mb-1.5">
+                                                   {p.agentName || 'Vanguard Agent'}
+                                                </p>
+                                                <div className="flex items-center gap-1.5 text-[8px] font-black text-white/20 tracking-widest uppercase">
+                                                   <span>REF: {p.id.slice(0, 10).toUpperCase()}</span>
+                                                </div>
+                                             </div>
+                                          </div>
+                                       </td>
+                                       <td className="px-10 py-7">
+                                          <div className="flex flex-col gap-1">
+                                             <p className="text-sm font-bold text-white font-mono tracking-wider">{p.momoNumber || 'N/A'}</p>
+                                             <span className={cn(
+                                                "text-[7px] font-black uppercase tracking-widest leading-none px-2 py-0.5 rounded border w-fit font-sans",
+                                                p.momoProvider === 'mtn' ? "bg-[#FFCC00]/10 text-[#FFCC00] border-[#FFCC00]/20" :
+                                                p.momoProvider === 'telecel' ? "bg-[#E60000]/10 text-[#E60000] border-[#E60000]/20" :
+                                                "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                             )}>
+                                                {p.momoProvider?.toUpperCase() || 'MTN'}
+                                             </span>
+                                          </div>
+                                       </td>
+                                       <td className="px-10 py-7 font-mono font-black text-accent text-base">
+                                          {formatGHC(p.amount || 0)}
+                                       </td>
+                                       <td className="px-10 py-7 text-[10px] font-bold text-white/40 whitespace-nowrap">
+                                          {p.createdAt ? (
+                                             p.createdAt.seconds 
+                                                ? new Date(p.createdAt.seconds * 1000).toLocaleString() 
+                                                : new Date(p.createdAt).toLocaleString()
+                                          ) : (
+                                             <span className="italic flex items-center gap-1.5">
+                                                <Clock className="w-3 h-3 text-yellow-500 animate-spin-slow" /> Awaiting clock sync
+                                             </span>
+                                          )}
+                                       </td>
+                                       <td className="px-10 py-7">
+                                          <span className={cn(
+                                             "px-4 py-2 rounded-full text-[8.5px] font-black uppercase tracking-[0.2em] inline-flex items-center gap-1.5",
+                                             badgeStyle
+                                          )}>
+                                             <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                                             {displayStatus}
+                                          </span>
+                                       </td>
+                                       {isBrandOwner && (
+                                          <td className="px-10 py-7 text-right">
+                                             <div className="flex justify-end gap-3.5">
+                                                {(status === 'Requested' || status === 'Pending') && (
+                                                   <button
+                                                      onClick={() => handleUpdatePayoutStatus(p.id, 'Verified')}
+                                                      className="bg-blue-600/30 hover:bg-blue-600 hover:text-white text-blue-400 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 border border-blue-500/20"
+                                                   >
+                                                      Verify
+                                                   </button>
+                                                )}
+                                                {(status === 'Requested' || status === 'Pending' || status === 'Verified') && (
+                                                   <button
+                                                      onClick={() => handleUpdatePayoutStatus(p.id, 'Disbursed')}
+                                                      className="bg-green-600 hover:bg-white hover:text-black text-white px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-[0_10px_20px_rgba(34,197,94,0.2)]"
+                                                   >
+                                                      Disburse
+                                                   </button>
+                                                )}
+                                                {(status === 'Disbursed' || status === 'Completed') && (
+                                                   <span className="text-[9px] font-black text-white/20 uppercase tracking-widest italic flex items-center gap-1.5">
+                                                      <ShieldCheck className="w-4 h-4 text-green-500" /> Settled
+                                                   </span>
+                                                )}
+                                             </div>
+                                          </td>
+                                       )}
+                                    </tr>
+                                 );
+                              })
+                           )}
+                        </tbody>
+                     </table>
+                  </div>
                </div>
             </section>
 
@@ -3465,7 +4179,7 @@ export function AgentPortal() {
                         </div>
                         <h3 className="text-xl font-display font-black uppercase italic tracking-tighter text-white">Payout History<span className="text-accent">_</span></h3>
                      </div>
-                     <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{payouts.length} Logs</span>
+                     <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{payouts.filter(p => p.agentId === user.uid).length} Logs</span>
                   </div>
 
                   {/* Withdrawal Authority Console */}
@@ -3475,13 +4189,13 @@ export function AgentPortal() {
                         <div className="space-y-2 text-center md:text-left">
                            <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white/20 italic">Liquid Royalty Reserve</p>
                            <h4 className="text-6xl font-display font-black text-white tracking-tighter leading-none animate-pulse-slow">
-                              {formatGHC(totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0))}
+                              {formatGHC(totalCommission - payouts.filter(p => p.agentId === user.uid).reduce((acc, p: any) => acc + (p.amount || 0), 0))}
                            </h4>
                            <p className="text-[9px] font-black uppercase text-accent tracking-widest mt-2 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg w-fit mx-auto md:ml-0">{agentProfile?.momoNumber || 'IDENTITY REQUIRED'}</p>
                         </div>
                         <button 
                            onClick={handleRequestPayout}
-                           disabled={totalCommission - payouts.reduce((acc, p: any) => acc + (p.amount || 0), 0) < 10}
+                           disabled={totalCommission - payouts.filter(p => p.agentId === user.uid).reduce((acc, p: any) => acc + (p.amount || 0), 0) < 10}
                            className="bg-accent text-black px-12 py-7 rounded-[2rem] font-black uppercase tracking-editorial text-[12px] hover:bg-white hover:scale-105 transition-all shadow-[0_20px_40px_rgba(242,125,38,0.3)] group-hover/payout:shadow-[0_30px_60px_rgba(242,125,38,0.4)] disabled:opacity-20 disabled:grayscale flex items-center gap-4"
                         >
                            <Zap className="w-5 h-5 fill-current" />
@@ -3491,16 +4205,17 @@ export function AgentPortal() {
                   </div>
 
                   <div className="space-y-5">
-                     {payouts.length > 0 ? (
-                        payouts.slice(0, 4).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((payout) => (
+                     {payouts.filter(p => p.agentId === user.uid).length > 0 ? (
+                        payouts.filter(p => p.agentId === user.uid).slice(0, 4).sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map((payout) => (
                            <div key={payout.id} className="p-6 bg-white/2 rounded-3xl border border-white/5 group hover:border-accent/30 transition-all hover:bg-white/5">
                               <div className="flex items-start justify-between mb-4">
                                  <p className="text-xl font-mono font-black text-white leading-none italic">{formatGHC(payout.amount)}</p>
                                  <span className={cn(
                                     "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-[0.2em]",
-                                    payout.status === 'Completed' ? "bg-green-500/20 text-green-500" : "bg-accent/20 text-accent"
+                                    (payout.status === 'Completed' || payout.status === 'Disbursed') ? "bg-green-500/20 text-green-500" :
+                                    payout.status === 'Verified' ? "bg-blue-500/20 text-blue-400" : "bg-accent/20 text-accent"
                                  )}>
-                                    {payout.status}
+                                    {payout.status === 'Requested' ? 'Pending' : payout.status}
                                  </span>
                               </div>
                               <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-white/20 italic">
@@ -3555,6 +4270,16 @@ export function AgentPortal() {
         isOpen={isMetadataModalOpen} 
         onClose={() => setIsMetadataModalOpen(false)} 
         product={selectedProductForMetadata} 
+      />
+      <ImageCropModal 
+        isOpen={isCropModalOpen} 
+        onClose={() => {
+          setIsCropModalOpen(false);
+          setSelectedFileForCrop(null);
+        }} 
+        file={selectedFileForCrop} 
+        onConfirmCrop={handleProcessedUpload} 
+        isUploading={isUploading} 
       />
     </main>
   );

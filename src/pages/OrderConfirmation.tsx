@@ -18,17 +18,22 @@ import {
   X,
   Search,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Printer
 } from 'lucide-react';
-import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, getDoc, increment, runTransaction, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { formatGHC, cn } from '@/src/lib/utils';
-import { DEPOSIT_PERCENTAGE, PAYMENT_MOBILE_MONEY, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
+import { DEPOSIT_PERCENTAGE, SUPPORT_INTERACTION_NUMBER, BANK_DETAILS } from '@/src/constants';
 import { toast } from 'react-hot-toast';
+import { initPaystackMock } from '../lib/paystackMock';
+import { logPaystackCallback } from '../lib/paystackLogger';
+
+const PAYSTACK_PUBLIC_KEY = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
 
 const STEPS = [
-  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting deposit verify' },
+  { id: 'pending', label: 'Pending Payment', icon: Clock, description: 'Awaiting payment verify' },
   { id: 'processing', label: 'Processing', icon: Zap, description: 'In production queue' },
   { id: 'shipped', label: 'Shipped', icon: Truck, description: 'En route to HQ/Delivery' },
   { id: 'delivered', label: 'Delivered', icon: CheckCircle2, description: 'Kingdom assets received' }
@@ -44,15 +49,12 @@ export function OrderConfirmationPage() {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isPinPromptOpen, setIsPinPromptOpen] = useState(false);
-  const [momoPin, setMomoPin] = useState('');
   const [trackId, setTrackId] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'momo' | 'bank'>('momo');
 
   const handleTrack = (e: React.FormEvent) => {
     e.preventDefault();
     if (!trackId.trim()) return;
-    navigate(`/order/${trackId.trim().toUpperCase()}`);
+    navigate(`/orders?track=${trackId.trim()}`);
     setTrackId('');
   };
 
@@ -94,16 +96,11 @@ export function OrderConfirmationPage() {
       return;
     }
     
-    // Open the PIN simulation prompt first
-    setMomoPin('');
-    setIsPinPromptOpen(true);
-  };
+    setIsAlerting(true);
+    const loadingToast = toast.loading('Synchronizing Secure Paystack Gateway...');
 
-  const handlePinSubmit = () => {
-    if (momoPin.length < 4) {
-      toast.error('Invalid PIN Protocol');
-      return;
-    }
+    const orderIdRef = order?.id || 'KNGS_TRY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
+    const transactionAttemptRef = `${orderIdRef}_PAY_${Date.now()}_` + Math.random().toString(36).substring(2, 6).toUpperCase();
 
     setIsPinPromptOpen(false);
     
@@ -124,34 +121,148 @@ export function OrderConfirmationPage() {
     }
   };
 
-  const handleKeyClick = (num: string) => {
-    if (momoPin.length < 6) {
-      setMomoPin(prev => prev + num);
-    }
-  };
-
-  const handleKeyBackspace = () => {
-    setMomoPin(prev => prev.slice(0, -1));
-  };
-
-  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
-
-  const handleMarkAsPaid = async () => {
-    if (!id || order.status !== 'pending') return;
-    
-    setIsSubmittingTransfer(true);
     try {
-      await updateDoc(doc(db, 'orders', id), {
-        paymentMethod: 'bank',
-        paymentSubmitted: true,
-        paymentSubmittedAt: new Date().toISOString()
+      // 1. Initialize Paystack Transaction on backend
+      const initRes = await fetch('/api/paystack/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user?.email || order?.customerEmail || 'customer@example.com',
+          amount: Math.round((order?.depositAmount || 0) * 100), // convert to subunits
+          reference: transactionAttemptRef,
+          metadata
+        })
       });
-      toast.success('Transfer Record Logged. Awaiting Verification.');
-    } catch (error) {
-      console.error('Submission Error:', error);
-      toast.error('Failed to log transfer record.');
-    } finally {
-      setIsSubmittingTransfer(false);
+
+      if (!initRes.ok) {
+        const errData = await initRes.json();
+        throw new Error(errData.error || 'Server rejected gateway synchronization');
+      }
+
+      const initData = await initRes.json();
+
+      const handlePaymentSuccess = async (response: any) => {
+        toast.dismiss(loadingToast);
+        
+        // Audit and validate response to stop false-positive payments
+        const audit = await logPaystackCallback(
+          'OrderConfirmation PayNow',
+          {
+            reference: orderIdRef,
+            amount: order?.depositAmount || 0,
+            email: user?.email || order?.customerEmail || 'customer@example.com'
+          },
+          response
+        );
+
+        if (!audit.isValid) {
+          toast.error(`Payment Authorization Failed: ${audit.reason || 'Details could not be verified'}`);
+          setIsAlerting(false);
+          return;
+        }
+
+        toast.success('Payment Received Successfully');
+        setIsAlerting(false);
+        if (id) {
+           try {
+              await updateDoc(doc(db, 'orders', id), {
+                paymentMethod: 'paystack',
+                paystackReference: response.reference || response.id || 'N/A'
+              });
+           } catch (dbErr) {
+              console.error("Failed to update payment details on document:", dbErr);
+           }
+        }
+        await handleConfirmPayment();
+      };
+
+      const handlePaymentClosed = () => {
+        setIsAlerting(false);
+        toast.dismiss(loadingToast);
+        toast.error('Transaction Terminated by User');
+      };
+
+      // 2. Open popup using resumed transaction / inline setup config
+      const isSimulation = initData.mode === 'simulation';
+
+      const config = {
+        key: PAYSTACK_PUBLIC_KEY,
+        email: user?.email || order?.customerEmail || 'customer@example.com',
+        amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        ref: transactionAttemptRef,
+        reference: transactionAttemptRef,
+        access_code: initData.data?.access_code || undefined,
+        mode: isSimulation ? 'simulation' : 'live',
+        metadata,
+        callback: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || transactionAttemptRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsAlerting(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsAlerting(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onSuccess: async (response: any) => {
+          if (isSimulation) {
+            await handlePaymentSuccess(response);
+          } else {
+            // Verify on backend server
+            const verifyToast = toast.loading('Confirming transaction clearance on server...');
+            try {
+              const verifyRes = await fetch(`/api/paystack/verify/${response.reference || transactionAttemptRef}`);
+              if (!verifyRes.ok) throw new Error('Payment verification rejected');
+              const verifyData = await verifyRes.json();
+              
+              if (verifyData.status && verifyData.data.status === 'success') {
+                toast.success('Clearance Approved');
+                await handlePaymentSuccess(response);
+              } else {
+                toast.error('Transaction failed validation clearance.');
+                setIsAlerting(false);
+              }
+            } catch (err: any) {
+              toast.error(`Verification Failure: ${err.message}`);
+              setIsAlerting(false);
+            } finally {
+              toast.dismiss(verifyToast);
+            }
+          }
+        },
+        onClose: handlePaymentClosed,
+        onCancel: handlePaymentClosed
+      };
+
+      if (isSimulation || !(window as any).PaystackPop) {
+        initPaystackMock();
+      }
+      
+      const handler = (window as any).PaystackPop.setup(config);
+      handler.openIframe();
+      toast.dismiss(loadingToast);
+    } catch (error: any) {
+      toast.dismiss(loadingToast);
+      toast.error('Terminal Error: ' + error.message);
+      setIsAlerting(false);
     }
   };
 
@@ -168,31 +279,49 @@ export function OrderConfirmationPage() {
         const orderData = orderSnap.data();
         if (orderData.status !== 'pending') throw new Error("Order is no longer pending");
 
+        // Perform agent read FIRST before any updates
+        let agentSnap = null;
+        let agentRef = null;
+        if (orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
+
         // 1. Update Order Status
         transaction.update(orderRef, {
           status: 'processing',
           paymentConfirmedAt: new Date().toISOString()
         });
 
-        // 2. Update Agent Profile Stats (The person who made the purchase)
-        if (orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
-          const agentSnap = await transaction.get(agentRef);
-          
-          if (agentSnap.exists()) {
-            const agentData = agentSnap.data();
-            transaction.update(agentRef, {
-              'stats.totalSales': increment(orderData.totalAmount),
-            });
+        // Trigger notification for order status change (processing)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Payment confirmed! Your order #${id.slice(0, 8)} is now being styled and printed.`;
+        transaction.set(notifRef, {
+          title: `Order Status: PROCESSING`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: id,
+          status: 'processing',
+          createdAt: serverTimestamp()
+        });
 
-            // 3. Credit Referrer if applicable (10% commission on total sales)
-            if (agentData?.referredBy) {
-              const referrerRef = doc(db, 'agents', agentData.referredBy);
-              const commissionAmount = orderData.totalAmount * 0.10;
-              transaction.update(referrerRef, {
-                'stats.commissionEarned': increment(commissionAmount)
-              });
-            }
+        // 2. Update Agent Profile Stats (The person who made the purchase)
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
+          const crownsEarned = Math.floor(orderData.totalAmount * 10);
+          transaction.update(agentRef, {
+            'stats.totalSales': increment(orderData.totalAmount),
+            loyaltyPoints: increment(crownsEarned)
+          });
+
+          // 3. Credit Referrer if applicable (10% commission on total sales)
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            const commissionAmount = orderData.totalAmount * 0.10;
+            transaction.update(referrerRef, {
+              'stats.commissionEarned': increment(commissionAmount)
+            });
           }
         }
       });
@@ -219,10 +348,31 @@ export function OrderConfirmationPage() {
         const orderData = orderSnap.data();
         const wasConfirmed = orderData.status !== 'pending';
 
+        // Perform agent read FIRST before any updates
+        let agentSnap = null;
+        let agentRef = null;
+        if (wasConfirmed && orderData.customerId) {
+          agentRef = doc(db, 'agents', orderData.customerId);
+          agentSnap = await transaction.get(agentRef);
+        }
+
         // 1. Update Order Status
         transaction.update(orderRef, {
           status: 'cancelled',
           cancelledAt: new Date().toISOString()
+        });
+
+        // Trigger notification for order status change (cancelled)
+        const notifRef = doc(collection(db, 'notifications'));
+        const notifMessage = `Order #${id.slice(0, 8)} has been cancelled.`;
+        transaction.set(notifRef, {
+          title: `Order Status: CANCELLED`,
+          message: notifMessage,
+          type: 'order',
+          userId: orderData.customerId || 'global',
+          orderId: id,
+          status: 'cancelled',
+          createdAt: serverTimestamp()
         });
 
         // 2. Deduct from salesCount for each product
@@ -234,24 +384,19 @@ export function OrderConfirmationPage() {
         });
 
         // 3. Deduct from stats if it was previously confirmed
-        if (wasConfirmed && orderData.customerId) {
-          const agentRef = doc(db, 'agents', orderData.customerId);
-          const agentSnap = await transaction.get(agentRef);
-          
-          if (agentSnap.exists()) {
-            const agentData = agentSnap.data();
-            transaction.update(agentRef, {
-              'stats.totalSales': increment(-orderData.totalAmount),
-            });
+        if (agentRef && agentSnap && agentSnap.exists()) {
+          const agentData = agentSnap.data();
+          transaction.update(agentRef, {
+            'stats.totalSales': increment(-orderData.totalAmount),
+          });
 
-            // 4. Reverse commission if referredBy exists
-            if (agentData?.referredBy) {
-              const referrerRef = doc(db, 'agents', agentData.referredBy);
-              const commissionAmount = orderData.totalAmount * 0.10;
-              transaction.update(referrerRef, {
-                'stats.commissionEarned': increment(-commissionAmount)
-              });
-            }
+          // 4. Reverse commission if referredBy exists
+          if (agentData?.referredBy) {
+            const referrerRef = doc(db, 'agents', agentData.referredBy);
+            const commissionAmount = orderData.totalAmount * 0.10;
+            transaction.update(referrerRef, {
+              'stats.commissionEarned': increment(-commissionAmount)
+            });
           }
         }
       });
@@ -305,13 +450,30 @@ export function OrderConfirmationPage() {
     },
   ], [order]);
 
+  const [selectedStep, setSelectedStep] = useState<string>('');
+
+  const currentStatusNormalized = useMemo(() => {
+    if (!order) return 'pending';
+    if (order.status === 'completed') return 'delivered';
+    return order.status;
+  }, [order]);
+
+  const currentStatusIdx = useMemo(() => {
+    return STEPS.findIndex(s => s.id === currentStatusNormalized);
+  }, [currentStatusNormalized]);
+
+  useEffect(() => {
+    if (order && !selectedStep) {
+      setSelectedStep(order.status === 'completed' ? 'delivered' : order.status);
+    }
+  }, [order, selectedStep]);
+
   const getStepStatus = (stepId: string) => {
     if (!order) return 'idle';
-    const statusIdx = STEPS.findIndex(s => s.id === order.status);
     const stepIdx = STEPS.findIndex(s => s.id === stepId);
     
-    if (stepIdx < statusIdx) return 'complete';
-    if (stepIdx === statusIdx) return 'active';
+    if (stepIdx < currentStatusIdx) return 'complete';
+    if (stepIdx === currentStatusIdx) return 'active';
     return 'idle';
   };
 
@@ -414,13 +576,14 @@ export function OrderConfirmationPage() {
               </div>
             </div>
             
-            <div className="flex flex-col md:grid md:grid-cols-4 gap-12 md:gap-8 relative">
+            <div className="flex flex-col md:grid md:grid-cols-4 gap-12 md:gap-8 relative select-none">
                {/* Progress Line (Desktop) */}
                <div className="hidden md:block absolute top-[28px] left-[12%] right-[12%] h-[2px] bg-white/5 z-0">
                   <motion.div 
                     initial={{ width: 0 }}
-                    animate={{ width: `${(STEPS.findIndex(s => s.id === order.status) / (STEPS.length - 1)) * 100}%` }}
+                    animate={{ width: `${(currentStatusIdx / (STEPS.length - 1)) * 100}%` }}
                     className="h-full bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)]"
+                    transition={{ duration: 0.8, ease: "easeOut" }}
                   />
                </div>
 
@@ -428,30 +591,38 @@ export function OrderConfirmationPage() {
                <div className="md:hidden absolute left-[23px] top-[10%] bottom-[10%] w-px bg-white/5 z-0">
                   <motion.div 
                     initial={{ height: 0 }}
-                    animate={{ height: `${(STEPS.findIndex(s => s.id === order.status) / (STEPS.length - 1)) * 100}%` }}
+                    animate={{ height: `${(currentStatusIdx / (STEPS.length - 1)) * 100}%` }}
                     className="w-full bg-accent shadow-[0_0_10px_rgba(242,125,38,0.5)]"
+                    transition={{ duration: 0.8, ease: "easeOut" }}
                   />
                </div>
 
                {STEPS.map((step, idx) => {
                  const status = getStepStatus(step.id);
                  const stepNumber = (idx + 1).toString().padStart(2, '0');
+                 const isSelected = selectedStep === step.id;
                  
                  return (
-                   <div key={step.id} className="flex flex-row md:flex-col items-center md:items-center text-center gap-8 md:gap-6 relative z-10">
+                   <button 
+                     key={step.id} 
+                     onClick={() => setSelectedStep(step.id)}
+                     className="flex flex-row md:flex-col items-center md:items-center text-center gap-8 md:gap-6 relative z-10 group/step text-left cursor-pointer focus:outline-none w-full"
+                   >
                       <div className="relative flex-shrink-0">
                         <div className={cn(
                           "w-12 h-12 md:w-14 md:h-14 rounded-full border-2 flex items-center justify-center transition-all duration-700 relative z-20",
                           status === 'active' ? "border-accent bg-accent text-black shadow-[0_0_30px_rgba(242,125,38,0.3)] scale-110" :
-                          status === 'complete' ? "border-accent bg-accent/20 text-accent" : "border-white/5 bg-background text-white/5"
+                          status === 'complete' ? "border-accent bg-accent/20 text-accent hover:bg-accent/30" : "border-white/5 bg-background text-white/5 hover:border-white/20",
+                          isSelected && "ring-2 ring-white/40 ring-offset-4 ring-offset-background"
                         )}>
-                          {status === 'complete' ? <CheckCircle2 className="w-6 h-6" /> : <step.icon className={cn("w-5 h-5 md:w-6 md:h-6", status === 'active' && "animate-pulse")} />}
+                          {status === 'complete' ? <CheckCircle2 className="w-6 h-6 animate-pulse" /> : <step.icon className={cn("w-5 h-5 md:w-6 md:h-6", status === 'active' && "animate-pulse")} />}
                         </div>
                         
                         {/* Step Number Background */}
                         <span className={cn(
-                          "absolute -top-4 -left-4 text-4xl font-display font-black italic opacity-5 pointer-events-none transition-colors duration-500",
-                          status !== 'idle' && "opacity-10 text-accent"
+                          "absolute -top-4 -left-4 text-4xl font-display font-black italic opacity-5 pointer-events-none transition-all duration-500",
+                          status !== 'idle' && "opacity-10 text-accent",
+                          isSelected && "opacity-20 scale-110"
                         )}>
                           {stepNumber}
                         </span>
@@ -459,22 +630,156 @@ export function OrderConfirmationPage() {
                       
                       <div className="text-left md:text-center space-y-1">
                          <p className={cn(
-                           "text-xs font-black uppercase tracking-editorial leading-none",
-                           status === 'idle' ? "text-white/20" : status === 'active' ? "text-accent" : "text-white"
+                           "text-xs font-black uppercase tracking-editorial leading-none transition-colors",
+                           status === 'idle' ? "text-white/20 group-hover/step:text-white/40" : status === 'active' ? "text-accent" : "text-white",
+                           isSelected && "text-accent underline underline-offset-4"
                          )}>{step.label}</p>
                          <p className="text-[9px] font-black uppercase tracking-tighter text-white/20 italic">{step.description}</p>
                       </div>
-                   </div>
+                   </button>
                  );
                })}
+            </div>
+
+            {/* Real-time Status Details & Logs */}
+            <div className="mt-12 pt-8 border-t border-white/5 grid grid-cols-1 lg:grid-cols-12 gap-8">
+               {/* Left Side: Step Guide */}
+               <div className="lg:col-span-7 bg-white/5 border border-white/5 rounded-2xl p-6 space-y-4">
+                 <div className="flex items-center space-x-3">
+                   <div className="p-2 bg-accent/20 text-accent rounded-lg">
+                     {(() => {
+                       const IconComp = STEPS.find(s => s.id === selectedStep)?.icon || Clock;
+                       return <IconComp className="w-5 h-5" />;
+                     })()}
+                   </div>
+                   <div>
+                     <span className="text-[9px] font-black uppercase tracking-widest text-accent">Selected Blueprint Stage</span>
+                     <h4 className="text-lg font-display font-black uppercase italic text-white flex items-center gap-2">
+                       {STEPS.find(s => s.id === selectedStep)?.label || 'System Protocol'}
+                       {selectedStep === currentStatusNormalized && (
+                         <span className="text-[8px] tracking-normal font-mono px-2 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 font-normal uppercase">Current</span>
+                       )}
+                     </h4>
+                   </div>
+                 </div>
+                 
+                 <div className="text-white/60 text-xs leading-relaxed space-y-3">
+                    {selectedStep === 'pending' && (
+                      <div className="space-y-2">
+                         <p>The system is awaiting confirmation of your GHS {formatGHC(order.depositAmount || 0)} payment.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Next Action Plan:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Authorize standard Mobile Money (MoMo) transfer via Paystack or direct pay.</li>
+                           <li>Our administrators verify proof of entry to activate production.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'processing' && (
+                      <div className="space-y-2">
+                         <p>Your payment was successfully authenticated! The Kings Design Authority has initialized the production workflow.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Active Operations:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Analyzing custom blueprints and design dimensions.</li>
+                           <li>Applying precise high-fidelity digital transfers on premium raw garments.</li>
+                           <li>Conducting manual print-integrity audit.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'shipped' && (
+                      <div className="space-y-2">
+                         <p>Sovereign logistics channels are engaged. Your curated garments are cleared for transport.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Dispatch Logistics:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Package secured in protective weather-resistant sealing.</li>
+                           <li>Route calculations optimizing for rapid regional delivery.</li>
+                           <li>Check WhatsApp / SMS alerts for delivery agent coordinates.</li>
+                         </ul>
+                      </div>
+                    )}
+                    {selectedStep === 'delivered' && (
+                      <div className="space-y-2">
+                         <p>Procurement protocol complete. Wardrobe upgrade finalized.</p>
+                         <p className="font-bold text-white uppercase text-[9px] tracking-widest mt-2 block text-accent">Post-Delivery Protocol:</p>
+                         <ul className="list-disc pl-5 space-y-1 text-[11px] text-white/50">
+                           <li>Confirm physical receipt with your delivery authority.</li>
+                           <li>Earn 10% commission on referrals by sharing your unique Agent Link.</li>
+                           <li>Submit your next layout blueprint in the agent workspace.</li>
+                         </ul>
+                      </div>
+                    )}
+                 </div>
+               </div>
+
+               {/* Right Side: Telemetry Terminal Logs */}
+               <div className="lg:col-span-12 xl:col-span-5 bg-black/60 border border-white/5 rounded-2xl p-6 font-mono text-[10px] text-emerald-500/80 space-y-4">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                     <span className="font-bold tracking-widest text-[9px] uppercase text-white/40 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                        Live Status Telemetry
+                     </span>
+                     <span className="text-[8px] text-white/20">CTRL_LOG_GHA</span>
+                  </div>
+                  
+                  <div className="space-y-2 max-h-[160px] overflow-y-auto scrollbar-none">
+                     <p className="text-white/20">[{new Date(order.createdAt?.seconds * 1000 || Date.now() - 3600000).toLocaleTimeString()}] SYS_BOOT: Procurement session initialized.</p>
+                     
+                     <p className="text-white/40">[{new Date(order.createdAt?.seconds * 1000 || Date.now() - 3600000).toLocaleTimeString()}] ORDER_ID: {order.id?.slice(0, 8)} logged to Ledger.</p>
+                     
+                     {order.paymentSubmitted && (
+                       <p className="text-amber-500/80">
+                          [{order.paymentSubmittedAt ? new Date(order.paymentSubmittedAt).toLocaleTimeString() : 'ACTIVE'}] DEP_LOG: Payment transfer record uploaded. Awaiting clerk verification.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 1 && (
+                       <p className="text-emerald-500/60 font-medium">
+                          [{order.updatedAt ? new Date(order.updatedAt.seconds * 1000).toLocaleTimeString() : 'ACTIVE'}] VERIFY: Clerk confirmed deposit. Production queue prioritized.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 2 && (
+                       <p className="text-sky-500/80 font-medium">
+                          [ACTIVE] DIST_AUTH: Garments packaged. Sovereign carrier assigned.
+                       </p>
+                     )}
+
+                     {currentStatusIdx >= 3 && (
+                       <p className="text-emerald-400 font-bold">
+                          [SUCCESS] HANDOVER: Package accepted by target recipient.
+                       </p>
+                     )}
+
+                     {order.status === 'cancelled' && (
+                       <p className="text-red-500 font-bold">
+                          [REVOKED] TERMINATE: Blueprint purged from active registers.
+                       </p>
+                     )}
+
+                     <div className="animate-pulse text-emerald-500/30">_ Awaiting live event broadcast...</div>
+                  </div>
+               </div>
+            </div>
+
+            <div className="mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="space-y-1">
+                 <p className="text-[10.5px] font-black uppercase tracking-widest text-accent animate-pulse">Advanced Logistics Telemetry Online</p>
+                 <p className="text-[9px] font-semibold uppercase tracking-wide text-white/40">Open the secure log to inspect shipping carriers, download digital receipt blueprints, or locate delivery ports.</p>
+              </div>
+              <Link 
+                to={`/orders?track=${order.id}`}
+                className="px-6 py-3.5 bg-accent text-black text-[9.5px] font-black uppercase tracking-widest rounded-xl hover:bg-white transition-all flex items-center justify-center space-x-2 shadow-lg shadow-accent/15 flex-shrink-0"
+              >
+                <span>Launch Tracking Hub</span>
+                <ChevronRight className="w-4 h-4" />
+              </Link>
             </div>
           </div>
         </div>
 
         {/* Details Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 print:block">
           {/* Payment & Next Steps */}
-          <div className="space-y-8">
+          <div className="space-y-8 print:hidden">
             <div className="glass p-10 rounded-[2.5rem] border border-white/5 flex flex-col justify-between h-full group hover:border-accent/30 transition-all duration-500">
                <div>
                   <div className="flex items-center space-x-2 text-accent mb-6">
@@ -483,32 +788,9 @@ export function OrderConfirmationPage() {
                   </div>
                    <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-6">{order.status === 'cancelled' ? 'Blueprint Terminated' : 'Payment Alert Protocol'}</h3>
                    
-                   {order.status === 'pending' && (
-                     <div className="flex p-1 bg-white/5 rounded-2xl mb-6">
-                        <button 
-                          onClick={() => setPaymentMethod('momo')}
-                          className={cn(
-                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
-                            paymentMethod === 'momo' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
-                          )}
-                        >
-                           <Zap className="w-3 h-3" />
-                           <span>Mobile Money</span>
-                        </button>
-                        <button 
-                          onClick={() => setPaymentMethod('bank')}
-                          className={cn(
-                            "flex-1 py-3 px-4 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2",
-                            paymentMethod === 'bank' ? "bg-accent text-black shadow-lg" : "text-white/40 hover:text-white"
-                          )}
-                        >
-                           <Landmark className="w-3 h-3" />
-                           <span>Bank Transfer</span>
-                        </button>
-                     </div>
-                   )}
 
-                   {order.status !== 'cancelled' && paymentMethod === 'momo' && (
+
+                   {order.status !== 'cancelled' && (
                      <div className="space-y-4 mb-8">
                         <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 flex flex-col items-center text-center space-y-4">
                            <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center text-accent animate-pulse">
@@ -517,7 +799,7 @@ export function OrderConfirmationPage() {
                            <div>
                               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent mb-2">Automated Alert Active</p>
                               <p className="text-white/40 text-[9px] leading-relaxed font-bold uppercase tracking-tight">
-                                 A secure payment request has been signaled from <span className="text-white font-black">{PAYMENT_MOBILE_MONEY}</span> to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> deposit.
+                                 A secure Paystack payment request has been signaled to your device. Please authorize the <span className="text-accent">{formatGHC(order.depositAmount)}</span> payment.
                               </p>
                            </div>
                         </div>
@@ -546,7 +828,7 @@ export function OrderConfirmationPage() {
                      </div>
                    )}
 
-                   {order.status !== 'cancelled' && paymentMethod === 'bank' && (
+                   {false && (null /*
                      <div className="space-y-4 mb-8">
                         <div className="bg-white/5 p-8 rounded-[2rem] border border-accent/20 space-y-6">
                            <div className="flex items-center space-x-3 text-accent transition-all">
@@ -597,11 +879,11 @@ export function OrderConfirmationPage() {
 
                         {order.status === 'pending' && !order.paymentSubmitted && (
                           <button 
-                            onClick={handleMarkAsPaid}
-                            disabled={isSubmittingTransfer}
+                            onClick={undefined}
+                            disabled={false}
                             className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-2xl hover:bg-white transition-all flex items-center justify-center space-x-3 shadow-lg shadow-accent/10"
                           >
-                            {isSubmittingTransfer ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                            {false ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
                             <span>Confirm Transfer Submission</span>
                           </button>
                         )}
@@ -612,7 +894,7 @@ export function OrderConfirmationPage() {
                           </div>
                         )}
                      </div>
-                   )}
+                    */)}
 
                    {order.status === 'pending' && (
                      <div className="space-y-4">
@@ -634,10 +916,10 @@ export function OrderConfirmationPage() {
                             </div>
                             <div className="space-y-2">
                                <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
-                                 Method: <span className="text-white">{order.paymentMethod === 'bank' ? 'Bank Transfer' : 'Mobile Money'}</span>
+                                 Method: <span className="text-white">Paystack Gateway</span>
                                </p>
                                <p className="text-[10px] font-black uppercase tracking-widest text-white/40 leading-relaxed italic">
-                                 Verify the {order.paymentMethod === 'bank' ? 'Account Ledger' : 'Paystack Ledger'} for <span className="text-accent">{formatGHC(order.depositAmount)}</span> before final authorization.
+                                 Verify the Paystack Ledger for <span className="text-accent">{formatGHC(order.depositAmount)}</span> before final authorization.
                                </p>
                             </div>
                             <button 
@@ -660,7 +942,7 @@ export function OrderConfirmationPage() {
                            className="w-full py-5 bg-accent text-black font-black uppercase text-[10px] tracking-widest rounded-3xl hover:bg-white transition-all flex items-center justify-center space-x-3 group/btn shadow-xl shadow-accent/20"
                          >
                            {isAlerting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4 group-hover/btn:scale-125 transition-transform" />}
-                           <span>Pay Deposit with Paystack</span>
+                           <span>Complete Payment with Paystack</span>
                          </button>
                        )}
                      </div>
@@ -695,51 +977,62 @@ export function OrderConfirmationPage() {
           </div>
 
           {/* Order Summary */}
-          <div className="glass p-10 rounded-[2.5rem] border border-white/5">
+          <div className="glass p-10 rounded-[2.5rem] border border-white/5 print:w-full print:bg-white print:text-black print:border-none print:shadow-none print:p-0">
              <div className="flex justify-between items-end mb-12">
-                <h3 className="text-[10px] font-black uppercase tracking-editorial text-white/40 italic">Architecture</h3>
-                <p className="text-[10px] font-black uppercase tracking-widest text-accent">Summary</p>
+                 <h3 className="text-[10px] font-black uppercase tracking-editorial text-white/40 italic print:text-black/40">Architecture</h3>
+                 <p className="text-[10px] font-black uppercase tracking-widest text-accent print:text-black font-bold">Summary</p>
              </div>
              
              <div className="space-y-8">
                 {order.items.map((item: any, idx: number) => (
                   <div key={idx} className="flex items-center space-x-6">
-                    <div className="w-20 h-24 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 grayscale">
+                    <div className="w-20 h-24 bg-[#1A1A1B] rounded-2xl overflow-hidden border border-white/5 grayscale print:border-black/10">
                        <img src="https://picsum.photos/seed/item/200/250" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                     <div className="flex-1">
-                      <h4 className="text-sm font-black uppercase tracking-tighter text-white mb-2 italic">"{item.name}"</h4>
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/20">
+                      <h4 className="text-sm font-black uppercase tracking-tighter text-white mb-2 italic print:text-black">"{item.name}"</h4>
+                      <p className="text-[9px] font-black uppercase tracking-widest text-white/20 print:text-black/40">
                          {item.gsm} GSM • {item.size} • {item.color}
                       </p>
                     </div>
-                    <div className="text-accent font-mono font-black text-xs">
+                    <div className="text-accent font-mono font-black text-xs print:text-black">
                        {formatGHC(item.price)}
                     </div>
                   </div>
                 ))}
              </div>
 
-             <div className="mt-12 pt-8 border-t border-white/5 space-y-4">
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20">
+             <div className="mt-12 pt-8 border-t border-white/5 space-y-4 print:border-black/10">
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20 print:text-black/60">
                    <span>Gross Total</span>
-                   <span className="text-white">{formatGHC(order.totalAmount)}</span>
+                   <span className="text-white print:text-black">{formatGHC(order.totalAmount)}</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent">
-                   <span>Deposit to Start</span>
-                   <span className="font-mono text-lg">{formatGHC(order.depositAmount)}</span>
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-accent print:text-black">
+                   <span>{order.totalAmount === order.depositAmount ? 'Full Payment' : 'Deposit to Start'}</span>
+                   <span className="font-mono text-lg print:text-black">{formatGHC(order.depositAmount)}</span>
                 </div>
-                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20">
-                   <span>Balance on Delivery</span>
-                   <span>{formatGHC(order.totalAmount - order.depositAmount)}</span>
+                <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-white/20 print:text-black/60">
+                   {order.totalAmount - order.depositAmount > 0 ? <span>Balance on Delivery</span> : null}
+                   {order.totalAmount - order.depositAmount > 0 ? <span className="print:text-black">{formatGHC(order.totalAmount - order.depositAmount)}</span> : null}
                 </div>
+             </div>
+
+             <div className="mt-8 pt-6 border-t border-white/5 print:hidden">
+                <button
+                  id="order-print-receipt-btn"
+                  onClick={() => window.print()}
+                  className="w-full py-4 bg-white/5 border border-white/10 hover:border-accent text-white font-black uppercase text-[10px] tracking-widest rounded-2xl transition-all flex items-center justify-center space-x-2 active:scale-95 duration-200"
+                >
+                   <Printer className="w-4 h-4 text-accent" />
+                   <span>Print Receipt Blueprint</span>
+                </button>
              </div>
           </div>
         </div>
       </div>
 
       {/* Global Order Tracking Segment */}
-      <section className="mt-24 pt-24 border-t border-white/5 pb-16">
+      <section className="mt-24 pt-24 border-t border-white/5 pb-16 print:hidden">
         <div className="max-w-4xl mx-auto px-4">
           <div className="glass p-12 rounded-[3.5rem] border border-white/10 relative overflow-hidden group">
             <div className="absolute -top-24 -right-24 w-64 h-64 bg-accent/5 blur-[100px] rounded-full group-hover:bg-accent/10 transition-colors" />
@@ -898,91 +1191,7 @@ export function OrderConfirmationPage() {
         )}
       </AnimatePresence>
 
-      {/* MoMo PIN Simulation Modal */}
-      <AnimatePresence>
-        {isPinPromptOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-2xl flex items-center justify-center p-6"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="w-full max-w-sm flex flex-col items-center"
-            >
-              {/* MoMo Logo/Icon */}
-              <div className="w-20 h-20 bg-accent rounded-3xl mb-8 flex items-center justify-center text-black shadow-[0_0_50px_rgba(242,125,38,0.4)]">
-                <Zap className="w-10 h-10" />
-              </div>
 
-              <div className="text-center mb-12">
-                <h3 className="text-2xl font-display font-black uppercase italic tracking-tighter text-white mb-2">SECURE GATEWAY</h3>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-accent">Authorize MoMo Protocol</p>
-                <p className="text-[10px] font-black uppercase tracking-widest text-white/20 mt-4 leading-relaxed">
-                  Enter your secret PIN to authenticate the <br/> 
-                  <span className="text-white font-black">{formatGHC(order?.depositAmount || 0)}</span> transaction.
-                </p>
-              </div>
-
-              {/* PIN Display */}
-              <div className="flex justify-center gap-4 mb-16">
-                {[...Array(4)].map((_, i) => (
-                  <motion.div
-                    key={i}
-                    animate={momoPin.length > i ? { scale: [1, 1.2, 1], backgroundColor: '#F27D26' } : { scale: 1, backgroundColor: 'rgba(255,255,255,0.05)' }}
-                    className={cn(
-                      "w-4 h-4 rounded-full border border-white/10 transition-all",
-                      momoPin.length > i ? "bg-accent shadow-[0_0_15px_rgba(242,125,38,0.5)]" : "bg-white/5"
-                    )}
-                  />
-                ))}
-              </div>
-
-              {/* Number Pad */}
-              <div className="grid grid-cols-3 gap-4 w-full mb-12">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                  <button
-                    key={num}
-                    onClick={() => handleKeyClick(num.toString())}
-                    className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
-                  >
-                    {num}
-                  </button>
-                ))}
-                <button 
-                  onClick={() => setIsPinPromptOpen(false)}
-                  className="h-16 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-red-500 hover:bg-red-500/10 rounded-2xl transition-all"
-                >
-                  ABORT
-                </button>
-                <button
-                  onClick={() => handleKeyClick('0')}
-                  className="h-16 bg-white/5 rounded-2xl text-xl font-black text-white hover:bg-accent hover:text-black hover:scale-105 active:scale-95 transition-all outline-none border border-white/5"
-                >
-                  0
-                </button>
-                <button
-                  onClick={handleKeyBackspace}
-                  className="h-16 flex items-center justify-center text-white/40 hover:text-white rounded-2xl bg-white/5 border border-white/5 hover:border-white/20 transition-all"
-                >
-                  <RefreshCw className="w-5 h-5 rotate-[270deg]" />
-                </button>
-              </div>
-
-              <button
-                onClick={handlePinSubmit}
-                disabled={momoPin.length < 4}
-                className="w-full py-5 bg-accent text-black font-black uppercase text-xs tracking-[0.3em] rounded-2xl hover:bg-white hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-30 disabled:grayscale disabled:scale-100 shadow-2xl shadow-accent/20"
-              >
-                PROCEED TO LEDGER
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
