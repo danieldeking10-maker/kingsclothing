@@ -19,6 +19,54 @@ export interface PaystackLogEntry {
   };
 }
 
+export interface PaystackValidationResult {
+  isValid: boolean;
+  errors: string[];
+  reference?: string;
+  status?: string;
+}
+
+export function validatePaystackResponse(response: any): PaystackValidationResult {
+  const errors: string[] = [];
+  const returnedReference = response?.reference || response?.id || response?.transaction || undefined;
+  const returnedStatus = response?.status ? String(response.status).toLowerCase() : '';
+  const returnedMessage = response?.message ? String(response.message).toLowerCase() : '';
+
+  if (!response || typeof response !== 'object') {
+    errors.push('Response payload is missing or invalid.');
+  }
+
+  if (!returnedReference) {
+    errors.push('Response is missing a transaction reference.');
+  }
+
+  const containsFailureWords =
+    returnedStatus.includes('fail') ||
+    returnedStatus.includes('declined') ||
+    returnedStatus.includes('cancel') ||
+    returnedMessage.includes('fail') ||
+    returnedMessage.includes('declined');
+
+  const hasSuccessSignal =
+    returnedStatus === 'success' ||
+    returnedStatus === 'successful' ||
+    returnedMessage === 'approved' ||
+    returnedMessage === 'success';
+
+  if (containsFailureWords) {
+    errors.push('Response contains an explicit failed, declined, or cancelled status.');
+  } else if (!hasSuccessSignal) {
+    errors.push('Response does not contain a recognized success status.');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    reference: returnedReference,
+    status: response?.status,
+  };
+}
+
 /**
  * Validates and logs a Paystack callback response structurally.
  * Returns { isValid: boolean, reason?: string } to authorize or reject the order write command.
