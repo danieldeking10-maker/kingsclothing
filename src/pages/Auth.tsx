@@ -18,6 +18,22 @@ import { auth, db } from '../lib/firebase';
 import { cn } from '@/src/lib/utils';
 import { handleFirestoreError, OperationType } from '../lib/firestoreErrors';
 
+const getAuthErrorMessage = (error: any, fallback = 'Authentication failed') => {
+  const currentDomain = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+
+  if (error?.code === 'auth/unauthorized-domain') {
+    return `Firebase must authorize ${currentDomain} before sign-in can continue.`;
+  }
+  if (error?.code === 'auth/user-not-found') return 'No account found with this email';
+  if (error?.code === 'auth/wrong-password') return 'Incorrect password';
+  if (error?.code === 'auth/email-already-in-use') return 'This email is already registered';
+  if (error?.code === 'auth/weak-password') return 'Password should be at least 6 characters';
+  if (error?.code === 'auth/invalid-credential') return 'Invalid access credentials';
+  if (error?.message) return error.message;
+
+  return fallback;
+};
+
 export function AuthPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,7 +80,7 @@ export function AuthPage() {
         console.error('Google Redirect Sign In Error:', error);
         if (!isMounted) return;
 
-        const msg = error?.message || 'Google Sign-In failed';
+        const msg = getAuthErrorMessage(error, 'Google Sign-In failed');
         setError(msg);
         toast.error(msg);
       }
@@ -147,14 +163,7 @@ export function AuthPage() {
       setTimeout(() => navigate(redirectPath), 500);
     } catch (error: any) {
       console.error('Auth Error:', error);
-      let msg = 'Authentication failed';
-      
-      if (error.code === 'auth/user-not-found') msg = 'No account found with this email';
-      else if (error.code === 'auth/wrong-password') msg = 'Incorrect password';
-      else if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered';
-      else if (error.code === 'auth/weak-password') msg = 'Password should be at least 6 characters';
-      else if (error.code === 'auth/invalid-credential') msg = 'Invalid access credentials';
-      else if (error.message) msg = error.message;
+      const msg = getAuthErrorMessage(error);
 
       setError(msg);
       toast.error(msg);
@@ -172,7 +181,7 @@ export function AuthPage() {
       await sendPasswordResetEmail(auth, email);
       toast.success('Password reset link deployed to your email');
     } catch (error: any) {
-      toast.error(error.message || 'Failed to send reset link');
+      toast.error(getAuthErrorMessage(error, 'Failed to send reset link'));
     }
   };
 
@@ -196,7 +205,9 @@ export function AuthPage() {
       console.error('Google Sign In Error:', error);
       
       let msg = 'Google Sign-In failed';
-      if (error.code === 'auth/popup-blocked') {
+      if (error.code === 'auth/unauthorized-domain') {
+        msg = getAuthErrorMessage(error, msg);
+      } else if (error.code === 'auth/popup-blocked') {
         try {
           await signInWithRedirect(auth, provider);
           return;
@@ -207,7 +218,7 @@ export function AuthPage() {
         setShowIframeWarning(true);
         msg = 'Sign-In handshakes restricted in iframe sandboxes';
       } else if (error.message) {
-        msg = error.message;
+        msg = getAuthErrorMessage(error, msg);
       }
       
       setError(msg);

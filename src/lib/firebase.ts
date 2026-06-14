@@ -1,7 +1,34 @@
 import { initializeApp, setLogLevel } from 'firebase/app';
+import type { FirebaseOptions } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '@/firebase-applet-config.json';
+import fallbackFirebaseConfig from '@/firebase-applet-config.json';
+
+type AppFirebaseConfig = FirebaseOptions & {
+  firestoreDatabaseId?: string;
+};
+
+const envFirebaseConfig: AppFirebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID,
+};
+
+const hasEnvFirebaseConfig = Boolean(
+  envFirebaseConfig.apiKey &&
+  envFirebaseConfig.authDomain &&
+  envFirebaseConfig.projectId &&
+  envFirebaseConfig.appId
+);
+
+const firebaseConfig: AppFirebaseConfig = hasEnvFirebaseConfig
+  ? envFirebaseConfig
+  : fallbackFirebaseConfig;
 
 // Disable chatty Firestore sync or clock-desync warning messages
 setLogLevel('error');

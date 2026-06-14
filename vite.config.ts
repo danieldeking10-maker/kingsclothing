@@ -14,7 +14,14 @@ export default defineConfig(({mode}) => {
         strategies: 'generateSW',
         registerType: 'autoUpdate',
         injectRegister: 'auto',
-        includeAssets: ['logo.svg'],
+        includeAssets: [
+          'favicon.ico',
+          'favicon-32x32.png',
+          'apple-touch-icon.png',
+          'icon-192.png',
+          'icon-512.png',
+          'logo.svg',
+        ],
         manifest: {
           name: 'KNGS Clothing | The Authority',
           short_name: 'KNGS',
@@ -24,10 +31,22 @@ export default defineConfig(({mode}) => {
           display: 'standalone',
           icons: [
             {
+              src: 'icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any maskable',
+            },
+            {
+              src: 'icon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable',
+            },
+            {
               src: 'logo.svg',
-              sizes: '192x192 512x512',
+              sizes: '512x512',
               type: 'image/svg+xml',
-              purpose: 'any maskable'
+              purpose: 'any maskable',
             }
           ]
         },
