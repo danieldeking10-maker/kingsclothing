@@ -7,7 +7,6 @@ import { validatePaystackResponse } from './paystackLogger';
 export function initPaystackMock() {
   if (typeof window === 'undefined') return;
 
-  const rawKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || 'pk_live_d894983d4fc4381d5bfd95e0e1db5b800df57f95';
   const hostname = window.location.hostname || '';
   const isDevOrPreview = hostname === 'localhost' || 
                          hostname === '127.0.0.1' || 
