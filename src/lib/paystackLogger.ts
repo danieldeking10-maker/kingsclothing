@@ -19,33 +19,31 @@ export interface PaystackLogEntry {
   };
 }
 
-export interface PaystackValidationResult {
-  isValid: boolean;
-  errors: string[];
-  reference?: string;
-  status?: string;
-}
-
-export function validatePaystackResponse(response: any): PaystackValidationResult {
+export function validatePaystackResponse(response: any): { isValid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const returnedReference = response?.reference || response?.id || response?.transaction || undefined;
-  const returnedStatus = response?.status ? String(response.status).toLowerCase() : '';
-  const returnedMessage = response?.message ? String(response.message).toLowerCase() : '';
+  const returnedReference = response?.reference || response?.id || response?.transaction;
+  const returnedStatus = String(response?.status || '').toLowerCase();
+  const returnedMessage = String(response?.message || '').toLowerCase();
 
-  if (!response || typeof response !== 'object') {
-    errors.push('Response payload is missing or invalid.');
+  if (!response) {
+    errors.push('Gateway returned an empty response.');
   }
 
   if (!returnedReference) {
-    errors.push('Response is missing a transaction reference.');
+    errors.push('Gateway response did not include a transaction reference.');
   }
 
-  const containsFailureWords =
+  const hasFailureSignal =
     returnedStatus.includes('fail') ||
     returnedStatus.includes('declined') ||
     returnedStatus.includes('cancel') ||
     returnedMessage.includes('fail') ||
-    returnedMessage.includes('declined');
+    returnedMessage.includes('declined') ||
+    returnedMessage.includes('cancel');
+
+  if (hasFailureSignal) {
+    errors.push('Gateway response included a failed, declined, or cancelled status.');
+  }
 
   const hasSuccessSignal =
     returnedStatus === 'success' ||
@@ -53,18 +51,11 @@ export function validatePaystackResponse(response: any): PaystackValidationResul
     returnedMessage === 'approved' ||
     returnedMessage === 'success';
 
-  if (containsFailureWords) {
-    errors.push('Response contains an explicit failed, declined, or cancelled status.');
-  } else if (!hasSuccessSignal) {
-    errors.push('Response does not contain a recognized success status.');
+  if (!hasSuccessSignal) {
+    errors.push('Gateway response did not include a success signal.');
   }
 
-  return {
-    isValid: errors.length === 0,
-    errors,
-    reference: returnedReference,
-    status: response?.status,
-  };
+  return { isValid: errors.length === 0, errors };
 }
 
 /**

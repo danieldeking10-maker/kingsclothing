@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Lock, User, ArrowRight, ShieldCheck, Zap, Fingerprint, ShieldAlert, ChevronRight, AlertCircle, Crown, Eye, EyeOff, Loader2, Sparkles, Binary } from 'lucide-react';
 import { 
+  getRedirectResult,
   signInWithPopup, 
+  signInWithRedirect,
   GoogleAuthProvider,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -46,6 +48,34 @@ export function AuthPage() {
   useEffect(() => {
     setIsSignUp(searchMode === 'signup');
   }, [searchMode]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const finishRedirectSignIn = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (!result || !isMounted) return;
+
+        await createProfile(result.user);
+        toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
+        navigate(redirectPath, { replace: true });
+      } catch (error: any) {
+        console.error('Google Redirect Sign In Error:', error);
+        if (!isMounted) return;
+
+        const msg = error?.message || 'Google Sign-In failed';
+        setError(msg);
+        toast.error(msg);
+      }
+    };
+
+    finishRedirectSignIn();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate, redirectPath]);
 
   const toggleMode = () => {
     const newMode = isSignUp ? 'signin' : 'signup';
@@ -98,15 +128,16 @@ export function AuthPage() {
 
     setIsLoading(true);
     setError(null);
+    const normalizedEmail = email.trim().toLowerCase();
 
     try {
       if (isSignUp) {
-        const result = await createUserWithEmailAndPassword(auth, email, password);
+        const result = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
         await updateProfile(result.user, { displayName: name });
         await createProfile(result.user);
         toast.success(`Welcome to the Kingdom, ${name}!`);
       } else {
-        const result = await signInWithEmailAndPassword(auth, email, password);
+        const result = await signInWithEmailAndPassword(auth, normalizedEmail, password);
         // Robustness: check/create profile on sign in too
         await createProfile(result.user);
         toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
@@ -151,6 +182,11 @@ export function AuthPage() {
     const provider = new GoogleAuthProvider();
     const isInIframe = typeof window !== 'undefined' && window.self !== window.top;
     try {
+      if (isInIframe) {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
       const result = await signInWithPopup(auth, provider);
       await createProfile(result.user);
       toast.success(`Welcome back, ${result.user.displayName || 'Warrior'}!`);
@@ -161,7 +197,12 @@ export function AuthPage() {
       
       let msg = 'Google Sign-In failed';
       if (error.code === 'auth/popup-blocked') {
-        msg = 'Popup blocked by browser';
+        try {
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectError: any) {
+          msg = redirectError?.message || 'Popup blocked by browser';
+        }
       } else if (isInIframe || error.code === 'auth/internal-error' || error.code === 'auth/network-request-failed' || error.code === 'auth/web-storage-unsupported') {
         setShowIframeWarning(true);
         msg = 'Sign-In handshakes restricted in iframe sandboxes';
