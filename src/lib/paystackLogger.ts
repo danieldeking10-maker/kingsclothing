@@ -19,6 +19,45 @@ export interface PaystackLogEntry {
   };
 }
 
+export function validatePaystackResponse(response: any): { isValid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const returnedReference = response?.reference || response?.id || response?.transaction;
+  const returnedStatus = String(response?.status || '').toLowerCase();
+  const returnedMessage = String(response?.message || '').toLowerCase();
+
+  if (!response) {
+    errors.push('Gateway returned an empty response.');
+  }
+
+  if (!returnedReference) {
+    errors.push('Gateway response did not include a transaction reference.');
+  }
+
+  const hasFailureSignal =
+    returnedStatus.includes('fail') ||
+    returnedStatus.includes('declined') ||
+    returnedStatus.includes('cancel') ||
+    returnedMessage.includes('fail') ||
+    returnedMessage.includes('declined') ||
+    returnedMessage.includes('cancel');
+
+  if (hasFailureSignal) {
+    errors.push('Gateway response included a failed, declined, or cancelled status.');
+  }
+
+  const hasSuccessSignal =
+    returnedStatus === 'success' ||
+    returnedStatus === 'successful' ||
+    returnedMessage === 'approved' ||
+    returnedMessage === 'success';
+
+  if (!hasSuccessSignal) {
+    errors.push('Gateway response did not include a success signal.');
+  }
+
+  return { isValid: errors.length === 0, errors };
+}
+
 /**
  * Validates and logs a Paystack callback response structurally.
  * Returns { isValid: boolean, reason?: string } to authorize or reject the order write command.
