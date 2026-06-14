@@ -73,24 +73,7 @@ export function OrderConfirmationPage() {
 
   const [isAlerting, setIsAlerting] = useState(false);
 
-  const handlePaystackSuccess = async (reference: any) => {
-    console.log('Payment Success:', reference);
-    toast.success('Payment Received Successfully');
-    // Save payment method and confirm
-    if (id) {
-       await updateDoc(doc(db, 'orders', id), {
-         paymentMethod: 'momo',
-         paystackReference: reference.reference || reference.id || 'N/A'
-       });
-    }
-    await handleConfirmPayment();
-  };
-
-  const handlePaystackClose = () => {
-    toast.error('Payment Window Closed');
-  };
-
-  const handleTriggerAlert = () => {
+  const handleTriggerAlert = async () => {
     if (!user?.email && !order?.customerEmail) {
       toast.error('Customer email required for Paystack');
       return;
@@ -101,33 +84,21 @@ export function OrderConfirmationPage() {
 
     const orderIdRef = order?.id || 'KNGS_TRY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
     const transactionAttemptRef = `${orderIdRef}_PAY_${Date.now()}_` + Math.random().toString(36).substring(2, 6).toUpperCase();
-
-    setIsPinPromptOpen(false);
+    const customerEmail = user?.email || order?.customerEmail || 'customer@example.com';
+    const metadata = {
+      orderId: orderIdRef,
+      source: 'order-confirmation',
+      customerId: order?.customerId || user?.uid || null,
+      transactionAttemptRef
+    };
     
-    try {
-      const handler = (window as any).PaystackPop.setup({
-        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
-        reference: order?.id || '',
-        email: user?.email || order?.customerEmail || 'customer@example.com',
-        amount: Math.round((order?.depositAmount || 0) * 100),
-        currency: 'GHS',
-        channels: ['mobile_money', 'card'],
-        callback: handlePaystackSuccess,
-        onClose: handlePaystackClose,
-      });
-      handler.openIframe();
-    } catch (error: any) {
-      toast.error('Payment gateway unavailable: ' + (error?.message || 'Please try again.'));
-    }
-  };
-
     try {
       // 1. Initialize Paystack Transaction on backend
       const initRes = await fetch('/api/paystack/initialize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: user?.email || order?.customerEmail || 'customer@example.com',
+          email: customerEmail,
           amount: Math.round((order?.depositAmount || 0) * 100), // convert to subunits
           reference: transactionAttemptRef,
           metadata
@@ -150,7 +121,7 @@ export function OrderConfirmationPage() {
           {
             reference: orderIdRef,
             amount: order?.depositAmount || 0,
-            email: user?.email || order?.customerEmail || 'customer@example.com'
+            email: customerEmail
           },
           response
         );
@@ -187,7 +158,7 @@ export function OrderConfirmationPage() {
 
       const config = {
         key: PAYSTACK_PUBLIC_KEY,
-        email: user?.email || order?.customerEmail || 'customer@example.com',
+        email: customerEmail,
         amount: Math.round((order?.depositAmount || 0) * 100), // convert to pesewas/kobo
         currency: 'GHS',
         channels: ['mobile_money', 'card'],
