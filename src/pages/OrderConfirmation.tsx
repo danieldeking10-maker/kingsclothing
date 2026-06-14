@@ -73,7 +73,24 @@ export function OrderConfirmationPage() {
 
   const [isAlerting, setIsAlerting] = useState(false);
 
-  const handleTriggerAlert = async () => {
+  const handlePaystackSuccess = async (reference: any) => {
+    console.log('Payment Success:', reference);
+    toast.success('Payment Received Successfully');
+    // Save payment method and confirm
+    if (id) {
+       await updateDoc(doc(db, 'orders', id), {
+         paymentMethod: 'momo',
+         paystackReference: reference.reference || reference.id || 'N/A'
+       });
+    }
+    await handleConfirmPayment();
+  };
+
+  const handlePaystackClose = () => {
+    toast.error('Payment Window Closed');
+  };
+
+  const handleTriggerAlert = () => {
     if (!user?.email && !order?.customerEmail) {
       toast.error('Customer email required for Paystack');
       return;
@@ -85,15 +102,24 @@ export function OrderConfirmationPage() {
     const orderIdRef = order?.id || 'KNGS_TRY_' + Math.random().toString(36).substring(2, 12).toUpperCase();
     const transactionAttemptRef = `${orderIdRef}_PAY_${Date.now()}_` + Math.random().toString(36).substring(2, 6).toUpperCase();
 
-    const metadata = {
-      custom_fields: [
-        {
-          display_name: "Order Confirmation",
-          variable_name: "order_confirmation",
-          value: orderIdRef
-        }
-      ]
-    };
+    setIsPinPromptOpen(false);
+    
+    try {
+      const handler = (window as any).PaystackPop.setup({
+        key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || '',
+        reference: order?.id || '',
+        email: user?.email || order?.customerEmail || 'customer@example.com',
+        amount: Math.round((order?.depositAmount || 0) * 100),
+        currency: 'GHS',
+        channels: ['mobile_money', 'card'],
+        callback: handlePaystackSuccess,
+        onClose: handlePaystackClose,
+      });
+      handler.openIframe();
+    } catch (error: any) {
+      toast.error('Payment gateway unavailable: ' + (error?.message || 'Please try again.'));
+    }
+  };
 
     try {
       // 1. Initialize Paystack Transaction on backend
