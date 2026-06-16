@@ -26,7 +26,7 @@ const FAQPage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m
 const SizeGuidePage = lazy(() => import("./pages/StaticPages").then(m => ({ default: m.SizeGuidePage })));
 const OrderConfirmationPage = lazy(() => import("./pages/OrderConfirmation").then(m => ({ default: m.OrderConfirmationPage })));
 const OrdersPage = lazy(() => import("./pages/Orders").then(m => ({ default: m.OrdersPage })));
-
+const PaymentTerminalPage = lazy(() => import("./pages/PaymentTerminal").then(m => ({ default: m.PaymentTerminalPage })));
 // Global loading skeleton for routes
 const PageLoader = () => (
   <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 bg-background">
@@ -90,6 +90,8 @@ function AppContent() {
                   <Route path="/size-guide" element={<SizeGuidePage />} />
                   <Route path="/order/:id" element={<OrderConfirmationPage />} />
                   <Route path="/orders" element={<OrdersPage />} />
+                  <Route path="/pay" element={<PaymentTerminalPage />} />
+                  <Route path="/payment" element={<PaymentTerminalPage />} />
                 </Routes>
               </m.div>
             </AnimatePresence>
