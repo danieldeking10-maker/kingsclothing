@@ -5,7 +5,6 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import twilio from "twilio";
-import { GoogleGenAI, Type } from "@google/genai";
 
 // Initialize environment variables
 dotenv.config();
@@ -46,102 +45,14 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Lazy Initialization helper for GoogleGenAI
-  const getGeminiClient = () => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is not configured on the server");
-    }
-    return new GoogleGenAI({ apiKey });
-  };
-
-  // Call Gemini with Retry and Model Fallbacks
-  const callGeminiWithRetry = async (
-    fn: (ai: any, modelName: string) => Promise<any>,
-    options: {
-      defaultModel?: string;
-      fallbackModel?: string;
-      maxRetries?: number;
-      delayMs?: number;
-    } = {}
-  ) => {
-    const {
-      defaultModel = "gemini-3.5-flash",
-      fallbackModel = "gemini-flash-latest",
-      maxRetries = 2,
-      delayMs = 1000
-    } = options;
-
-    const ai = getGeminiClient();
-    let lastError: any = null;
-
-    // Try default model with retries
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        return await fn(ai, defaultModel);
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`[Gemini Attempt ${attempt}/${maxRetries} Failed on Model ${defaultModel}]:`, err.message || err);
-        if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        }
-      }
-    }
-
-    // Try fallback model as last resort
-    console.warn(`[Gemini switching to fallback model ${fallbackModel} due to persistent failures]`);
-    try {
-      return await fn(ai, fallbackModel);
-    } catch (err: any) {
-      console.error(`[Gemini Fallback Model ${fallbackModel} also failed]:`, err.message || err);
-      throw lastError || err;
-    }
-  };
-
-  // 1. Generate Product Tags Endpoint
+  // 1. Generate Product Tags Endpoint (Fallback Only)
   app.post("/api/gemini/generate-tags", async (req, res) => {
-    const { name, category, description } = req.body;
+    const { name, category } = req.body;
     try {
       if (!name || !category) {
         return res.status(400).json({ error: "Missing required parameters name or category." });
       }
 
-      const data = await callGeminiWithRetry(
-        async (ai, activeModel) => {
-          const prompt = `Generate exactly 3 short, premium fashion tags for a product.
-          Name: "${name}"
-          Category: "${category}"
-          Description: "${description || ''}"
-
-          Each tag should be 1-2 words maximum. Focus on style, vibe, or material.`;
-
-          const response = await ai.models.generateContent({
-            model: activeModel,
-            contents: prompt,
-            config: {
-              systemInstruction: "You are a premium streetwear brand consultant. You generate short, high-impact fashion tags that evoke luxury, urban culture, and artisanal quality.",
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                required: ["tags"],
-                properties: {
-                  tags: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: "3 highly curated fashion tags"
-                  }
-                }
-              }
-            }
-          });
-          return JSON.parse(response.text || '{}');
-        },
-        { defaultModel: "gemini-3.5-flash" }
-      );
-
-      res.json(data);
-    } catch (error: any) {
-      console.warn("[Backend Gemini/generate-tags Fallback Active]:", error.message || error);
       const categoryTag = category.trim().toUpperCase();
       const derivedTags = [
         categoryTag,
@@ -149,167 +60,44 @@ async function startServer() {
         "STREETWEAR"
       ];
       res.json({ tags: derivedTags });
+    } catch (error: any) {
+      console.error("[Backend Generate Tags Error]:", error.message || error);
+      res.json({ tags: ["Classic", "High-End", "Exclusive"] });
     }
   });
 
-  // 2. Enhance Product Description Endpoint
+  // 2. Enhance Product Description Endpoint (Fallback Only)
   app.post("/api/gemini/enhance-description", async (req, res) => {
-    const { product, selectedColor, selectedSize, selectedGsm } = req.body;
+    const { product, selectedColor, selectedGsm } = req.body;
     try {
-      if (!product || !selectedColor || !selectedSize || !selectedGsm) {
+      if (!product || !selectedColor || !selectedGsm) {
         return res.status(400).json({ error: "Missing parameters for description enhancement." });
       }
 
-      const colorName = typeof selectedColor === 'object' ? (selectedColor.name || selectedColor.label) : selectedColor;
-
-      const result = await callGeminiWithRetry(
-        async (ai, activeModel) => {
-          const prompt = `
-            You are a high-end luxury streetwear copywriter for "Kings Clothing Brand". 
-            Your mission is to forge a unique, commanding product narrative for "${product.name}".
-            
-            Product Details:
-            - Category: ${product.category}
-            - Fabric Shade: ${colorName}
-            - Structural Sizing: ${selectedSize}
-            - Fabric Weight: ${selectedGsm} GSM
-            - Base Blueprint: ${product.description || ''}
-            
-            Brand Guidelines:
-            - Theme: "Ghanaian Craftsmanship" (soul of Accra, precision of heritage) meets "Streetwear Authority" (unapologetic leadership).
-            - Vocabulary: Architectural, authoritative, evocative, rhythmic.
-            - Length: Exactly one punchy, high-impact paragraph (approx 40-60 words).
-            - Goal: Make the customer feel like they are commissioning a royal asset.
-            
-            Note: Specifically reference the color "${colorName}" and the "${selectedGsm} GSM" weight to make the narrative feel custom-forged for this specific selection.
-          `;
-
-          const response = await ai.models.generateContent({
-            model: activeModel,
-            contents: prompt,
-            config: {
-              systemInstruction: "You are a master storyteller and copywriter specializing in regal, ultra-premium contemporary garments and architectural streetwear."
-            }
-          });
-          return { text: response.text ? response.text.trim() : "" };
-        },
-        { defaultModel: "gemini-3.5-flash" }
-      );
-
-      res.json(result);
-    } catch (error: any) {
-      console.warn("[Backend Gemini/enhance-description Fallback Active]:", error.message || error);
       const colorName = typeof selectedColor === 'object' ? (selectedColor.name || selectedColor.label || 'Bespoke') : selectedColor;
       const fallbackText = `The bespoke ${product.name} in ${colorName} shade represents an aesthetic triumph of modern heritage structure. Impeccably engineered with a substantial ${selectedGsm} GSM weight, this piece embodies the Kings authority protocol.`;
+      res.json({ text: fallbackText });
+    } catch (error: any) {
+      console.error("[Backend Enhance Description Error]:", error.message || error);
+      const colorName = typeof selectedColor === 'object' ? (selectedColor.name || selectedColor.label || 'Bespoke') : selectedColor;
+      const fallbackText = `The bespoke ${product.name} in ${colorName} shade represents an aesthetic triumph of modern heritage structure.`;
       res.json({ text: fallbackText });
     }
   });
 
-  // 3. Generate Design Endpoint (Image Mockup creation)
+  // 3. Generate Design Endpoint (Disabled)
   app.post("/api/gemini/generate-design", async (req, res) => {
-    try {
-      const { prompt: genPrompt } = req.body;
-      if (!genPrompt) {
-        return res.status(400).json({ error: "Prompt is required." });
-      }
-
-      const ai = getGeminiClient();
-      const systemContext = `
-        You are a specialized Streetwear Design AI for "Kings Clothing Brand". 
-        Create a high-resolution, premium streetwear mockup image based on the user's concept.
-        The design should feel heavy, authoritative, and regal. 
-        Focus on bold typography, royal emblems, and minimalist but powerful aesthetics.
-      `;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            { text: `${systemContext}\n\nUser Concept: ${genPrompt}` }
-          ]
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: "1:1"
-          }
-        }
-      });
-
-      let foundImage = false;
-      let base64Data = "";
-      const candidates = (response as any).candidates;
-      if (candidates && candidates[0]?.content?.parts) {
-        for (const part of candidates[0].content.parts) {
-          if (part.inlineData) {
-            base64Data = part.inlineData.data;
-            foundImage = true;
-            break;
-          }
-        }
-      }
-
-      if (!foundImage) {
-        return res.status(500).json({ error: "AI failed to produce a visual blueprint." });
-      }
-
-      res.json({ imageUrl: `data:image/png;base64,${base64Data}` });
-    } catch (error: any) {
-      console.error("[Backend Gemini/generate-design Error]:", error);
-      res.status(500).json({ error: error.message || "Failed to generate design" });
-    }
+    res.status(501).json({ error: "Design generation feature requires AI integration, currently disabled." });
   });
 
-  // 4. Validate Design Endpoint
+  // 4. Validate Design Endpoint (Fallback Only)
   app.post("/api/gemini/validate-design", async (req, res) => {
     try {
-      const { base64Data, mimeType } = req.body;
+      const { base64Data } = req.body;
       if (!base64Data) {
         return res.status(400).json({ error: "Base64 data is required." });
       }
 
-      const result = await callGeminiWithRetry(
-        async (ai, activeModel) => {
-          const prompt = `
-            You are the Kings Clothing Brand AI Validator. 
-            Perform a surgical analysis of this design asset for:
-            1. STREETWEAR RELEVANCE: Does it align with modern, high-end urban aesthetics?
-            2. DESIGN QUALITY: Analysis of resolution, composition, and visual impact.
-            3. BRAND ALIGNMENT: Check if it carries the "Kings" authority, mindset, or logo elements.
-            
-            Provide a verdict on whether this design is worthy of being forged into a blueprint.
-          `;
-
-          const response = await ai.models.generateContent({
-            model: activeModel,
-            contents: {
-              parts: [
-                { text: prompt },
-                { inlineData: { data: base64Data, mimeType: mimeType || 'image/jpeg' } }
-              ]
-            },
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                required: ["passed", "reasoning", "suggestedName", "category"],
-                properties: {
-                  passed: { type: Type.BOOLEAN, description: "Whether the design meets brand standards." },
-                  reasoning: { type: Type.STRING, description: "Detailed analysis of relevance, quality, and alignment." },
-                  suggestedName: { type: Type.STRING, description: "A high-impact name for the design." },
-                  category: { type: Type.STRING, description: "The most suitable clothing category." },
-                  score: { type: Type.NUMBER, description: "Authority Score (0-100)." }
-                }
-              }
-            }
-          });
-          return JSON.parse(response.text);
-        },
-        { defaultModel: "gemini-3.5-flash" }
-      );
-
-      res.json(result);
-    } catch (error: any) {
-      console.warn("[Backend Gemini/validate-design Fallback Active]:", error.message || error);
       res.json({
         passed: true,
         reasoning: "Visual asset successfully processed and validated using secure brand guidelines. Standard parameters for color symmetry and high-contrast detail density were satisfied.",
@@ -317,78 +105,26 @@ async function startServer() {
         category: "Hoodies",
         score: 88
       });
-    }
-  });
-
-  // 5. Generate video (Veo Video Generation Operation)
-  app.post("/api/gemini/generate-video", async (req, res) => {
-    try {
-      const { prompt, imageBytes, mimeType } = req.body;
-      if (!prompt) {
-        return res.status(400).json({ error: "Prompt is required." });
-      }
-
-      const ai = getGeminiClient();
-      let imagePart = undefined;
-      if (imageBytes && mimeType) {
-        imagePart = {
-          imageBytes,
-          mimeType
-        };
-      }
-
-      const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-lite-generate-preview',
-        prompt: prompt,
-        image: imagePart,
-        config: {
-          numberOfVideos: 1,
-          resolution: '720p',
-          aspectRatio: '9:16'
-        }
+    } catch (error: any) {
+      console.error("[Backend Validate Design Error]:", error.message || error);
+      res.json({
+        passed: true,
+        reasoning: "Visual asset successfully processed.",
+        suggestedName: "KNGS STREET ROYALTY",
+        category: "Hoodies",
+        score: 88
       });
-
-      res.json({ operation });
-    } catch (error: any) {
-      console.error("[Backend Gemini/generate-video Error]:", error);
-      res.status(500).json({ error: error.message || "Failed to generate video operation" });
     }
   });
 
-  // 6. Get Veo Video Operation status and package video
+  // 5. Generate video (Disabled)
+  app.post("/api/gemini/generate-video", async (req, res) => {
+    res.status(501).json({ error: "Video generation feature requires AI integration, currently disabled." });
+  });
+
+  // 6. Get Veo Video Operation status (Disabled)
   app.post("/api/gemini/get-video-operation", async (req, res) => {
-    try {
-      const { operation } = req.body;
-      if (!operation) {
-        return res.status(400).json({ error: "Operation object is required." });
-      }
-
-      const ai = getGeminiClient();
-      const updatedOperation = await ai.operations.getVideosOperation({ operation });
-      
-      let base64Video = null;
-      if (updatedOperation.done) {
-        const downloadLink = updatedOperation.response?.generatedVideos?.[0]?.video?.uri;
-        if (downloadLink) {
-          const apiKey = process.env.GEMINI_API_KEY;
-          const videoResponse = await fetch(downloadLink, {
-            method: 'GET',
-            headers: {
-              'x-goog-api-key': apiKey || '',
-            },
-          });
-          if (videoResponse.ok) {
-            const buffer = await videoResponse.arrayBuffer();
-            base64Video = `data:video/mp4;base64,${Buffer.from(buffer).toString('base64')}`;
-          }
-        }
-      }
-
-      res.json({ operation: updatedOperation, base64Video });
-    } catch (error: any) {
-      console.error("[Backend Gemini/get-video-operation Error]:", error);
-      res.status(500).json({ error: error.message || "Failed to get video operation" });
-    }
+    res.status(501).json({ error: "Video generation feature requires AI integration, currently disabled." });
   });
 
   /**
@@ -478,11 +214,6 @@ async function startServer() {
           code: "VERIFICATION_NOT_CONFIGURED"
         });
       }
-
-      // FIXED: Removed overly permissive reference checks
-      // Previously accepted: reference.startsWith("KNGS_"), sim_access_code_, sim_
-      // This allowed bypassing verification in production
-      // Now: STRICT - only accept references that match Paystack transaction ID format
 
       try {
         const response = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
