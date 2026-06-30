@@ -2,12 +2,17 @@
 
 Follow this guide step-by-step to deploy your Kings Clothing website and start accepting real payments!
 
+## ✨ New Features Added
+- 🤖 **AI Agent**: Support for OpenAI, Anthropic, Groq, and Gemini
+- 🗄️ **Dual Database System**: Choose between Firebase (default) or Supabase
+
 ---
 
 ## 📋 Prerequisites
 1. Your GitHub repository is ready (you've pushed your code)
 2. You have a Paystack account
-3. You have a Firebase project set up
+3. (Optional) AI API key from OpenAI/Anthropic/Groq/Gemini
+4. (Optional) Supabase account if you want to use Supabase instead of Firebase
 
 ---
 
@@ -41,7 +46,18 @@ Click "Add a variable" and add **all** these variables:
 | `VITE_PAYSTACK_PUBLIC_KEY` | (Your Paystack Public Key from .env) |
 | `PAYSTACK_SECRET_KEY` | (Your Paystack Secret Key from .env) |
 
-### Firebase Configuration Variables
+### AI Agent Configuration (Optional)
+| Variable Name | Value |
+|---------------|-------|
+| `VITE_AI_PROVIDER` | Choose: openai, anthropic, groq, gemini |
+| `VITE_AI_API_KEY` | Your AI provider API key |
+| `VITE_AI_MODEL` | (Optional) Specific model name |
+| `VITE_AI_BASE_URL` | (Optional) Custom API base URL |
+
+### Database Configuration
+You can choose **either Firebase (default)** or **Supabase**:
+
+#### Option A: Firebase (Default)
 Get these from your Firebase Console → Project Settings → General → Your apps → SDK setup and configuration (Config)
 | Variable Name | Your Firebase Value |
 |---------------|---------------------|
@@ -51,6 +67,13 @@ Get these from your Firebase Console → Project Settings → General → Your a
 | `VITE_FIREBASE_STORAGE_BUCKET` | `your-project-id.firebasestorage.app` |
 | `VITE_FIREBASE_MESSAGING_SENDER_ID` | (from Firebase config) |
 | `VITE_FIREBASE_APP_ID` | (from Firebase config) |
+
+#### Option B: Supabase (Alternative Database)
+Get these from your Supabase Console → Project Settings → API
+| Variable Name | Your Supabase Value |
+|---------------|---------------------|
+| `VITE_SUPABASE_URL` | Your Supabase Project URL |
+| `VITE_SUPABASE_ANON_KEY` | Your Supabase anon public key |
 
 ### Optional Variables (Notifications)
 If you want SMS/email notifications, set these too:
@@ -65,7 +88,7 @@ If you want SMS/email notifications, set these too:
 
 ---
 
-## Step 3: Configure Firebase Authorized Domains
+## Step 3: Configure Firebase Authorized Domains (if using Firebase)
 
 1. Go to [Firebase Console](https://console.firebase.google.com)
 2. Select your project
@@ -89,6 +112,7 @@ Once deployed:
 2. Add an item to cart
 3. Go through checkout with a small test amount (1 GHS)
 4. Verify the payment goes through to your Paystack account
+5. (Optional) Test the AI chat assistant!
 
 ---
 

@@ -13,6 +13,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initGlobalErrorHandlers } from "./lib/errorReporting";
 import { useEffect, lazy, Suspense } from "react";
 import { ProgressBar } from "./components/ui/ProgressBar";
+import { AIChat } from "./components/AIChat";
 
 // Lazy-loaded pages for optimized transition and initial load speed
 const HomePage = lazy(() => import("./pages/Home").then(m => ({ default: m.HomePage })));
@@ -115,6 +116,7 @@ function AppContent() {
           }
         }}
       />
+      <AIChat />
     </div>
   );
 }
