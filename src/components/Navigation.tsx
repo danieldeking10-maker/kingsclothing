@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download, Bell, Tag, Gift } from 'lucide-react';
+import { ShoppingCart, User, Menu, X, Search, Zap, Phone, LogOut, Package, Users, Receipt, ArrowRight, Loader2, SlidersHorizontal, ArrowUpDown, Filter, ChevronDown, ShieldCheck, Music2, Download, Bell, Tag, Gift, Heart } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence, stagger } from 'motion/react';
 import { useAuth } from '../lib/AuthContext';
 import { useCart } from '../lib/CartContext';
+import { useWishlist } from '../lib/WishlistContext';
 import { auth, db } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
 import { cn } from '@/src/lib/utils';
@@ -34,6 +35,7 @@ export function Header() {
   const searchRef = useRef<HTMLDivElement>(null);
   const { user, isBrandOwner } = useAuth();
   const { totalItems } = useCart();
+  const { wishlist } = useWishlist();
   const navigate = useNavigate();
   const { installPrompt, isInstalled, isIOS, showInstallPrompt } = usePWAInstall();
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
@@ -582,6 +584,17 @@ export function Header() {
               </AnimatePresence>
             </div>
 
+            <Link
+              to="/wishlist"
+              className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 cursor-pointer"
+            >
+              <Heart className="w-4 h-4" />
+              {wishlist.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-accent text-black text-[9px] font-black px-1.5 py-0.5 rounded-full animate-in zoom-in duration-300">
+                  {wishlist.length}
+                </span>
+              )}
+            </Link>
             <button 
               onClick={() => setIsCartOpen(true)}
               className="relative p-2 lg:p-3 hover:bg-white/10 rounded-full transition-colors border border-white/5 cursor-pointer"
@@ -708,6 +721,17 @@ export function Header() {
               </AnimatePresence>
             </div>
 
+            <Link
+              to="/wishlist"
+              className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"
+            >
+              <Heart className="w-6 h-6" />
+              {wishlist.length > 0 && (
+                <span className="absolute top-1 right-1 bg-accent text-black text-[9px] font-black px-1.5 py-0.5 rounded-full ring-2 ring-background">
+                  {wishlist.length}
+                </span>
+              )}
+            </Link>
             <button 
               onClick={() => setIsCartOpen(true)}
               className="p-3 relative text-foreground/60 hover:text-accent transition-colors cursor-pointer"

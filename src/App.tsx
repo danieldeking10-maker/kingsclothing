@@ -8,6 +8,7 @@ import { Toaster } from "react-hot-toast";
 import { AnimatePresence, LazyMotion, domMax, m } from "motion/react";
 import { AuthProvider } from "./lib/AuthContext";
 import { CartProvider } from "./lib/CartContext";
+import { WishlistProvider } from "./lib/WishlistContext";
 import { Header, Footer } from "./components/Navigation";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initGlobalErrorHandlers } from "./lib/errorReporting";
@@ -28,6 +29,7 @@ const SizeGuidePage = lazy(() => import("./pages/StaticPages").then(m => ({ defa
 const OrderConfirmationPage = lazy(() => import("./pages/OrderConfirmation").then(m => ({ default: m.OrderConfirmationPage })));
 const OrdersPage = lazy(() => import("./pages/Orders").then(m => ({ default: m.OrdersPage })));
 const PaymentTerminalPage = lazy(() => import("./pages/PaymentTerminal").then(m => ({ default: m.PaymentTerminalPage })));
+const WishlistPage = lazy(() => import("./pages/Wishlist").then(m => ({ default: m.WishlistPage })));
 // Global loading skeleton for routes
 const PageLoader = () => (
   <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 bg-background">
@@ -93,6 +95,7 @@ function AppContent() {
                   <Route path="/orders" element={<OrdersPage />} />
                   <Route path="/pay" element={<PaymentTerminalPage />} />
                   <Route path="/payment" element={<PaymentTerminalPage />} />
+                  <Route path="/wishlist" element={<WishlistPage />} />
                 </Routes>
               </m.div>
             </AnimatePresence>
@@ -131,7 +134,9 @@ export default function App() {
       <Router>
         <AuthProvider>
           <CartProvider>
-            <AppContent />
+            <WishlistProvider>
+              <AppContent />
+            </WishlistProvider>
           </CartProvider>
         </AuthProvider>
       </Router>

@@ -1,12 +1,13 @@
 import React, { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon, Clock } from 'lucide-react';
+import { Zap, Trash2, Edit3, ChevronRight, Sparkles, Plus, Share2, Twitter, Facebook, MessageCircle, Settings2, Save, Eye, X as CloseIcon, Clock, Heart } from 'lucide-react';
 import { formatGHC, cn } from '@/src/lib/utils';
 import { PRICING, GSM_OPTIONS, FABRIC_COLORS } from '@/src/constants';
 import { GSM } from '@/src/types';
 import { generateProductTags } from '../services/geminiService';
 import { useCart } from '../lib/CartContext';
+import { useWishlist } from '../lib/WishlistContext';
 import { toast } from 'react-hot-toast';
 import { db } from '../lib/firebase';
 import { doc, updateDoc, collection, query, where, limit, onSnapshot } from 'firebase/firestore';
@@ -36,6 +37,7 @@ const getProductPrice = (product: any, selectedGsm: GSM): number => {
 
 export const ProductCard = memo(({ product, isAdmin, onDelete, onUpdatePrice, isNew }: ProductCardProps) => {
   const { addItem } = useCart();
+  const { addToWishlist, removeFromWishlist, isInWishlist } = useWishlist();
   const [tags, setTags] = React.useState<string[]>(product.aiTags || []);
   const [loadingTags, setLoadingTags] = React.useState(false);
   const [showShareMenu, setShowShareMenu] = React.useState(false);
