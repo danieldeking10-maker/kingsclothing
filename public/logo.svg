@@ -1,5 +1,136 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="100" fill="#000000"/>
-  <text x="50%" y="55%" font-family="Arial, sans-serif" font-weight="900" font-size="200" fill="#EAB308" text-anchor="middle" dominant-baseline="middle">KNGS</text>
-  <path d="M150 350 L362 350" stroke="#EAB308" stroke-width="20" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F5C842;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#D4A017;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#A67C00;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="goldShine" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFE066;stop-opacity:0.8" />
+      <stop offset="50%" style="stop-color:#FFD700;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#B8860B;stop-opacity:0.8" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <rect width="512" height="512" fill="#000000" rx="0"/>
+  
+  <g filter="url(#glow)">
+    <!-- Crown -->
+    <path d="M256 30 L288 90 L320 50 L352 90 L380 40 L380 110 L132 110 L132 40 L160 90 L192 50 L224 90 Z" 
+          fill="url(#gold)" stroke="url(#goldShine)" stroke-width="1.5"/>
+    <circle cx="256" cy="65" r="8" fill="url(#goldShine)"/>
+    <circle cx="160" cy="72" r="5" fill="url(#goldShine)"/>
+    <circle cx="352" cy="72" r="5" fill="url(#goldShine)"/>
+    
+    <!-- Top Mane Heart Shape -->
+    <path d="M132 130 
+             C110 160, 100 200, 120 240 
+             C130 260, 110 270, 100 250 
+             C80 280, 90 310, 110 330 
+             C95 345, 100 370, 130 360 
+             C120 385, 135 410, 160 400 
+             C165 420, 185 435, 210 425 
+             L230 450 
+             L256 490 
+             L282 450 
+             L302 425 
+             C327 435, 347 420, 352 400 
+             C377 410, 392 385, 382 360 
+             C412 370, 417 345, 402 330 
+             C422 310, 432 280, 412 250 
+             C402 270, 382 260, 392 240 
+             C412 200, 402 160, 380 130 
+             C350 100, 300 105, 256 140 
+             C212 105, 162 100, 132 130 Z" 
+          fill="url(#gold)" stroke="url(#goldShine)" stroke-width="1"/>
+    
+    <!-- Face Outline -->
+    <path d="M190 170 
+             C170 190, 160 220, 165 260 
+             C165 290, 155 310, 175 330 
+             C170 355, 190 370, 215 360 
+             L230 390 
+             L256 410 
+             L282 390 
+             L297 360 
+             C322 370, 342 355, 337 330 
+             C357 310, 347 290, 347 260 
+             C352 220, 342 190, 322 170 
+             C300 150, 275 145, 256 170 
+             C237 145, 212 150, 190 170 Z" 
+          fill="#000000"/>
+    
+    <!-- Left Eye Stylized -->
+    <g transform="translate(200, 220)">
+      <path d="M0 20 C-10 15, -25 5, -30 -10 C-25 -25, -5 -30, 0 -20 C5 -30, 25 -25, 30 -10 C25 5, 10 15, 0 20 Z" 
+            fill="url(#gold)"/>
+      <circle cx="-15" cy="-10" r="3" fill="#000"/>
+      <circle cx="15" cy="-10" r="3" fill="#000"/>
+      <circle cx="0" cy="-5" r="4" fill="#000"/>
+      <path d="M-25 -15 L-20 -5 M25 -15 L20 -5 M0 15 L0 -10" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    
+    <!-- Right Eye Stylized -->
+    <g transform="translate(312, 220)">
+      <path d="M0 20 C-10 15, -25 5, -30 -10 C-25 -25, -5 -30, 0 -20 C5 -30, 25 -25, 30 -10 C25 5, 10 15, 0 20 Z" 
+            fill="url(#gold)"/>
+      <circle cx="-15" cy="-10" r="3" fill="#000"/>
+      <circle cx="15" cy="-10" r="3" fill="#000"/>
+      <circle cx="0" cy="-5" r="4" fill="#000"/>
+      <path d="M-25 -15 L-20 -5 M25 -15 L20 -5 M0 15 L0 -10" stroke="#000" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    
+    <!-- Nose -->
+    <path d="M230 300 
+             C220 305, 218 320, 225 328 
+             L240 340 
+             C248 345, 264 345, 272 340 
+             L287 328 
+             C294 320, 292 305, 282 300 
+             C275 295, 262 290, 256 295 
+             C250 290, 237 295, 230 300 Z" 
+          fill="url(#gold)"/>
+    
+    <!-- Mouth Outline -->
+    <path d="M220 345 C210 355, 208 370, 220 380 L256 395 L292 380 C304 370, 302 355, 292 345" 
+          stroke="url(#gold)" stroke-width="4" fill="none" stroke-linecap="round"/>
+    <path d="M256 350 L256 395" stroke="url(#gold)" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Whiskers Left -->
+    <path d="M160 290 L200 298 M158 310 L200 314 M162 328 L200 326" 
+          stroke="url(#gold)" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Whiskers Right -->
+    <path d="M352 290 L312 298 M354 310 L312 314 M350 328 L312 326" 
+          stroke="url(#gold)" stroke-width="3" stroke-linecap="round"/>
+    
+    <!-- Mane Inner Detail Lines -->
+    <path d="M155 165 C165 185, 175 215, 178 240" 
+          stroke="#000" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
+    <path d="M357 165 C347 185, 337 215, 334 240" 
+          stroke="#000" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.9"/>
+    
+    <!-- Mane side curves -->
+    <path d="M115 220 C125 240, 150 250, 165 255" 
+          stroke="#000" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.8"/>
+    <path d="M397 220 C387 240, 362 250, 347 255" 
+          stroke="#000" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.8"/>
+    
+    <!-- Bottom mane details -->
+    <path d="M140 365 C155 375, 180 385, 210 380" 
+          stroke="#000" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.7"/>
+    <path d="M372 365 C357 375, 332 385, 302 380" 
+          stroke="#000" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.7"/>
+    
+    <!-- Chin beard triangle -->
+    <path d="M220 400 L256 450 L292 400 C280 415, 268 420, 256 415 C244 420, 232 415, 220 400 Z" 
+          fill="url(#gold)"/>
+  </g>
 </svg>

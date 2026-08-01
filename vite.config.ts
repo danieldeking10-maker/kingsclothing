@@ -15,11 +15,6 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         injectRegister: 'auto',
         includeAssets: [
-          'favicon.ico',
-          'favicon-32x32.png',
-          'apple-touch-icon.png',
-          'icon-192.png',
-          'icon-512.png',
           'logo.svg',
         ],
         manifest: {
@@ -31,27 +26,15 @@ export default defineConfig(({mode}) => {
           display: 'standalone',
           icons: [
             {
-              src: 'icon-192.png',
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any maskable',
-            },
-            {
-              src: 'icon-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any maskable',
-            },
-            {
               src: 'logo.svg',
-              sizes: '512x512',
+              sizes: 'any',
               type: 'image/svg+xml',
               purpose: 'any maskable',
             }
           ]
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,svg}'],
+          globPatterns: ['**/*.{js,css,html,svg,png,jpg,jpeg,webp}'],
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true

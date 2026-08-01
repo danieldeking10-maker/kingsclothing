@@ -2,22 +2,119 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="KNGS Clothing — The ultimate urban luxury clothing protocol. Premium streetwear, tailored fits, and exclusive drops." />
+    <meta name="keywords" content="KNGS, Kings Clothing, luxury streetwear, urban fashion, premium clothing, Ghana fashion" />
+    <meta name="author" content="KNGS Clothing" />
+    <meta name="robots" content="index, follow" />
     <title>KNGS Clothing | The Authority</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://firestore.googleapis.com">
     <script src="https://js.paystack.co/v1/inline.js" defer></script>
     <meta name="theme-color" content="#000000" />
+    <meta name="color-scheme" content="dark" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <meta name="apple-mobile-web-app-title" content="KNGS" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta name="msapplication-tap-highlight" content="no" />
     <link rel="icon" type="image/svg+xml" href="/logo.svg" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" sizes="any" />
+    <link rel="apple-touch-icon" href="/logo.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/logo.svg" />
+    <link rel="mask-icon" href="/logo.svg" color="#D4A017" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="KNGS Clothing | The Authority" />
+    <meta property="og:description" content="The ultimate urban luxury clothing protocol." />
+    <meta property="og:image" content="/logo.svg" />
+    <meta property="og:site_name" content="KNGS Clothing" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="KNGS Clothing | The Authority" />
+    <meta name="twitter:description" content="The ultimate urban luxury clothing protocol." />
+    <meta name="twitter:image" content="/logo.svg" />
+    <style>
+      html { scroll-behavior: smooth; }
+      body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+      ::selection { background: #f27d26; color: #000; }
+      #root { min-height: 100dvh; }
+      .boot-hide { opacity: 0; }
+      .boot-fade { animation: bootFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      @keyframes bootFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+      .boot-screen {
+        position: fixed; inset: 0; z-index: 9999;
+        background: #0A0A0B;
+        display: flex; align-items: center; justify-content: center;
+        flex-direction: column; gap: 24px;
+        transition: opacity 0.6s ease, visibility 0.6s ease;
+      }
+      .boot-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+      .boot-logo {
+        width: 88px; height: 88px;
+        animation: bootPulse 1.6s ease-in-out infinite;
+      }
+      @keyframes bootPulse {
+        0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(212, 160, 23, 0)); }
+        50% { transform: scale(1.04); filter: drop-shadow(0 0 24px rgba(212, 160, 23, 0.35)); }
+      }
+      .boot-text {
+        font-family: 'Space Grotesk', sans-serif;
+        font-size: 10px; font-weight: 900; letter-spacing: 0.5em;
+        text-transform: uppercase; color: #D4A017;
+        opacity: 0.7; animation: bootText 1.6s ease-in-out infinite;
+      }
+      @keyframes bootText { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.9; } }
+      .boot-progress {
+        width: 120px; height: 2px; background: rgba(255,255,255,0.06);
+        border-radius: 999px; overflow: hidden;
+      }
+      .boot-progress-bar {
+        height: 100%; width: 0%; background: linear-gradient(90deg, #F5C842, #f27d26);
+        animation: bootProgress 1.4s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+      }
+      @keyframes bootProgress { to { width: 100%; } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-logo, .boot-text, .boot-progress-bar { animation: none; }
+        .boot-progress-bar { width: 100%; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="boot-screen" class="boot-screen" aria-hidden="true">
+      <svg class="boot-logo" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F5C842"/><stop offset="50%" stop-color="#D4A017"/><stop offset="100%" stop-color="#A67C00"/></linearGradient></defs>
+        <path d="M256 30 L288 90 L320 50 L352 90 L380 40 L380 110 L132 110 L132 40 L160 90 L192 50 L224 90 Z" fill="url(#bg)"/>
+        <circle cx="256" cy="65" r="8" fill="#FFE066"/>
+        <path d="M132 130 C110 160, 100 200, 120 240 C130 260, 110 270, 100 250 C80 280, 90 310, 110 330 C95 345, 100 370, 130 360 C120 385, 135 410, 160 400 C165 420, 185 435, 210 425 L230 450 L256 490 L282 450 L302 425 C327 435, 347 420, 352 400 C377 410, 392 385, 382 360 C412 370, 417 345, 402 330 C422 310, 432 280, 412 250 C402 270, 382 260, 392 240 C412 200, 402 160, 380 130 C350 100, 300 105, 256 140 C212 105, 162 100, 132 130 Z" fill="url(#bg)"/>
+        <path d="M190 170 C170 190, 160 220, 165 260 C165 290, 155 310, 175 330 C170 355, 190 370, 215 360 L230 390 L256 410 L282 390 L297 360 C322 370, 342 355, 337 330 C357 310, 347 290, 347 260 C352 220, 342 190, 322 170 C300 150, 275 145, 256 170 C237 145, 212 150, 190 170 Z" fill="#0A0A0B"/>
+        <path d="M200 240 C190 235, 175 225, 170 210 C175 195, 195 190, 200 200 C205 190, 225 195, 230 210 C225 225, 210 235, 200 240 Z M312 240 C302 235, 287 225, 282 210 C287 195, 307 190, 312 200 C317 190, 337 195, 342 210 C337 225, 322 235, 312 240 Z" fill="url(#bg)"/>
+        <path d="M230 300 C220 305, 218 320, 225 328 L240 340 C248 345, 264 345, 272 340 L287 328 C294 320, 292 305, 282 300 C275 295, 262 290, 256 295 C250 290, 237 295, 230 300 Z" fill="url(#bg)"/>
+        <path d="M220 345 C210 355, 208 370, 220 380 L256 395 L292 380 C304 370, 302 355, 292 345 M256 350 L256 395 M160 290 L200 298 M158 310 L200 314 M162 328 L200 326 M352 290 L312 298 M354 310 L312 314 M350 328 L312 326 M220 400 L256 450 L292 400" stroke="url(#bg)" stroke-width="8" stroke-linecap="round" fill="none"/>
+      </svg>
+      <div class="boot-progress"><div class="boot-progress-bar"></div></div>
+      <div class="boot-text">Establishing Authority</div>
+    </div>
+    <div id="root" class="boot-hide"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      window.addEventListener('load', function() {
+        const root = document.getElementById('root');
+        const boot = document.getElementById('boot-screen');
+        if (root) root.classList.remove('boot-hide');
+        setTimeout(function() {
+          if (boot) boot.classList.add('hidden');
+          if (root) root.classList.add('boot-fade');
+          setTimeout(function() { if (boot) boot.remove(); }, 700);
+        }, 1500);
+      });
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        window.addEventListener('scroll', function() {
+          const vh = window.innerHeight * 0.01;
+          document.documentElement.style.setProperty('--vh', vh + 'px');
+        }, { passive: true });
+        document.documentElement.style.setProperty('--vh', (window.innerHeight * 0.01) + 'px');
+      }
+    </script>
   </body>
 </html>

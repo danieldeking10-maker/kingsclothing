@@ -276,9 +276,30 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 md:h-20 gap-4">
           {/* Logo */}
-          <Link to="/" className="flex-shrink-0 flex items-center space-x-2">
-            <span className="text-xl md:text-2xl font-display font-black tracking-tighter uppercase italic">
-              Kings<span className="text-accent underline decoration-white/20">.</span>
+          <Link to="/" className="flex-shrink-0 flex items-center gap-3 group">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-xl gold-gradient opacity-0 group-hover:opacity-30 blur-xl transition-opacity duration-500" />
+              <svg viewBox="0 0 512 512" className="w-10 h-10 md:w-12 md:h-12 relative transition-transform duration-500 group-hover:scale-105 group-hover:rotate-[2deg]" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="navGold" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#F5C842"/>
+                    <stop offset="50%" stopColor="#D4A017"/>
+                    <stop offset="100%" stopColor="#A67C00"/>
+                  </linearGradient>
+                </defs>
+                <path d="M256 30 L288 90 L320 50 L352 90 L380 40 L380 110 L132 110 L132 40 L160 90 L192 50 L224 90 Z" fill="url(#navGold)"/>
+                <circle cx="256" cy="65" r="7" fill="#FFE066"/>
+                <circle cx="160" cy="72" r="4" fill="#FFE066"/>
+                <circle cx="352" cy="72" r="4" fill="#FFE066"/>
+                <path d="M132 130 C110 160, 100 200, 120 240 C130 260, 110 270, 100 250 C80 280, 90 310, 110 330 C95 345, 100 370, 130 360 C120 385, 135 410, 160 400 C165 420, 185 435, 210 425 L230 450 L256 490 L282 450 L302 425 C327 435, 347 420, 352 400 C377 410, 392 385, 382 360 C412 370, 417 345, 402 330 C422 310, 432 280, 412 250 C402 270, 382 260, 392 240 C412 200, 402 160, 380 130 C350 100, 300 105, 256 140 C212 105, 162 100, 132 130 Z" fill="url(#navGold)"/>
+                <path d="M190 170 C170 190, 160 220, 165 260 C165 290, 155 310, 175 330 C170 355, 190 370, 215 360 L230 390 L256 410 L282 390 L297 360 C322 370, 342 355, 337 330 C357 310, 347 290, 347 260 C352 220, 342 190, 322 170 C300 150, 275 145, 256 170 C237 145, 212 150, 190 170 Z" fill="#0A0A0B"/>
+                <path d="M200 240 C190 235, 175 225, 170 210 C175 195, 195 190, 200 200 C205 190, 225 195, 230 210 C225 225, 210 235, 200 240 Z M312 240 C302 235, 287 225, 282 210 C287 195, 307 190, 312 200 C317 190, 337 195, 342 210 C337 225, 322 235, 312 240 Z" fill="url(#navGold)"/>
+                <path d="M230 300 C220 305, 218 320, 225 328 L240 340 C248 345, 264 345, 272 340 L287 328 C294 320, 292 305, 282 300 C275 295, 262 290, 256 295 C250 290, 237 295, 230 300 Z" fill="url(#navGold)"/>
+                <path d="M220 345 C210 355, 208 370, 220 380 L256 395 L292 380 C304 370, 302 355, 292 345 M256 350 L256 395 M160 290 L200 298 M158 310 L200 314 M162 328 L200 326 M352 290 L312 298 M354 310 L312 314 M350 328 L312 326 M220 400 L256 450 L292 400" stroke="url(#navGold)" strokeWidth="7" strokeLinecap="round" fill="none"/>
+              </svg>
+            </div>
+            <span className="text-lg md:text-2xl font-display font-black tracking-tighter uppercase italic leading-none">
+              Kings<span className="gold-text">.</span>
             </span>
           </Link>
 
@@ -776,9 +797,27 @@ export function Header() {
             >
               {/* Header inside Menu */}
               <div className="flex items-center justify-between px-6 py-5 border-b border-white/5 bg-white/[0.02]">
-                <span className="text-xl font-display font-black uppercase italic tracking-tighter">
-                  KINGS<span className="text-accent">.</span>
-                </span>
+                <div className="flex items-center gap-3">
+                  <svg viewBox="0 0 512 512" className="w-10 h-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <linearGradient id="navGoldMobile" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor="#F5C842"/>
+                        <stop offset="50%" stopColor="#D4A017"/>
+                        <stop offset="100%" stopColor="#A67C00"/>
+                      </linearGradient>
+                    </defs>
+                    <path d="M256 30 L288 90 L320 50 L352 90 L380 40 L380 110 L132 110 L132 40 L160 90 L192 50 L224 90 Z" fill="url(#navGoldMobile)"/>
+                    <circle cx="256" cy="65" r="7" fill="#FFE066"/>
+                    <path d="M132 130 C110 160, 100 200, 120 240 C130 260, 110 270, 100 250 C80 280, 90 310, 110 330 C95 345, 100 370, 130 360 C120 385, 135 410, 160 400 C165 420, 185 435, 210 425 L230 450 L256 490 L282 450 L302 425 C327 435, 347 420, 352 400 C377 410, 392 385, 382 360 C412 370, 417 345, 402 330 C422 310, 432 280, 412 250 C402 270, 382 260, 392 240 C412 200, 402 160, 380 130 C350 100, 300 105, 256 140 C212 105, 162 100, 132 130 Z" fill="url(#navGoldMobile)"/>
+                    <path d="M190 170 C170 190, 160 220, 165 260 C165 290, 155 310, 175 330 C170 355, 190 370, 215 360 L230 390 L256 410 L282 390 L297 360 C322 370, 342 355, 337 330 C357 310, 347 290, 347 260 C352 220, 342 190, 322 170 C300 150, 275 145, 256 170 C237 145, 212 150, 190 170 Z" fill="#0A0A0B"/>
+                    <path d="M200 240 C190 235, 175 225, 170 210 C175 195, 195 190, 200 200 C205 190, 225 195, 230 210 C225 225, 210 235, 200 240 Z M312 240 C302 235, 287 225, 282 210 C287 195, 307 190, 312 200 C317 190, 337 195, 342 210 C337 225, 322 235, 312 240 Z" fill="url(#navGoldMobile)"/>
+                    <path d="M230 300 C220 305, 218 320, 225 328 L240 340 C248 345, 264 345, 272 340 L287 328 C294 320, 292 305, 282 300 C275 295, 262 290, 256 295 C250 290, 237 295, 230 300 Z" fill="url(#navGoldMobile)"/>
+                    <path d="M220 345 C210 355, 208 370, 220 380 L256 395 L292 380 C304 370, 302 355, 292 345 M256 350 L256 395 M220 400 L256 450 L292 400" stroke="url(#navGoldMobile)" strokeWidth="7" strokeLinecap="round" fill="none"/>
+                  </svg>
+                  <span className="text-xl font-display font-black uppercase italic tracking-tighter">
+                    KINGS<span className="gold-text">.</span>
+                  </span>
+                </div>
                 <button 
                   onClick={() => setIsMenuOpen(false)} 
                   className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-all group active:scale-90"
